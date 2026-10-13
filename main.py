@@ -96,3 +96,115 @@ def check_part_flow(user: dict) -> None:
     io_manager.display_result(final_record)
 
 
+def history_flow(user: dict) -> None:
+    """Menu option 2: list every saved check for this user's license plate.
+    Returns nothing; explains on screen if there are none yet."""
+    my_records = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
+    if not my_records:
+        # Explain why the list is empty so the screen doesn't look broken.
+        io_manager.display_message(f"\nNo checks saved for {user['license_plate']} yet. "
+                                   "Choose 1 to check a part -- it will appear here.")
+        return
+    io_manager.display_list(my_records)
+
+
+def urgent_flow(user: dict) -> None:
+    """Menu option 3: list this user's checks that need attention, highest risk first.
+    Returns nothing."""
+    # is_urgent(): outcome starts with URGENT, FLAGGED, DUE SOON, COE EXPIRED
+    # or NEEDS MANUAL REVIEW.
+    urgent_records = data_manager.query(
+        lambda r: r.get("license_plate") == user["license_plate"] and logic_manager.is_urgent(r)
+    )
+    # Highest risk_score first; records without a score sort as 0.
+    urgent_records.sort(key=lambda r: r.get("risk_score", 0), reverse=True)
+    if not urgent_records:
+        io_manager.display_message("\nNothing needs attention right now: none of your checks are "
+                                   "urgent, flagged, overdue or waiting for manual review. "
+                                   "(Choose 2 to see all your checks.)")
+        return
+    io_manager.display_list(urgent_records)
+
+
+# ======================================================================
+# ACCOUNTS: log in, and Create / Read / Update / Delete a profile ("CRUD")
+# ======================================================================
+
+def login_flow() -> dict | None:
+    """Log in by license plate.
+    Returns the user's profile, or None if no profile has that plate."""
+    plate = io_manager.prompt_login()
+    user = data_manager.find_user_by_plate(plate)
+    if user is None:
+        io_manager.display_message(f"No profile for {plate}. Choose 'Register new profile' first.")
+        return None
+    io_manager.display_message(f"\nWelcome back, {user['name']}!")
+    return user
+
+
+def register_flow() -> dict | None:
+    """CREATE a new profile and log the user in.
+    Returns the new profile, or None if the car list is missing or saving failed."""
+    car_models = data_manager.list_car_models()
+    if not car_models:
+        io_manager.display_message("The car list (data/cars.json) is missing, so you can't register yet.")
+        return None
+
+    # The license plate is the account ID, so io_manager must refuse duplicates.
+    taken_plates = {u.get("license_plate") for u in data_manager.load_users()}
+
+    identity = io_manager.prompt_identity(taken_plates)
+    car_model = io_manager.prompt_car_choice(car_models)
+
+    profile = {
+        "name": identity["name"],
+        "license_plate": identity["license_plate"],
+        "car_model": car_model,
+        # Brand New / Used comes from cars.json, not from the user.
+        "car_condition": data_manager.find_car(car_model)["condition"],
+        "coe_expiry_date": io_manager.prompt_coe_expiry(),
+    }
+
+    if not data_manager.save_user(profile):
+        io_manager.display_message("Could not save your profile. Please try again.")
+        return None
+    io_manager.display_message("\nProfile created -- you are now logged in.")
+    io_manager.display_user(profile)
+    return profile
+
+
+def update_profile_flow(user: dict) -> dict:
+    """UPDATE the user's name or COE expiry date (plate and car are fixed).
+    Returns the updated profile, or the unchanged one if saving failed."""
+    updated = io_manager.prompt_updated_profile(user)
+    if not data_manager.save_user(updated):
+        io_manager.display_message("Could not save your changes. Please try again.")
+        return user
+    io_manager.display_message("\nProfile updated.")
+    io_manager.display_user(updated)
+    return updated
+
+
+def delete_profile_flow(user: dict) -> dict | None:
+    """DELETE the profile and all its saved checks, after a y/n confirmation.
+    Returns None if deleted (logs the user out), else the same user."""
+    plate = user["license_plate"]
+    record_count = len(data_manager.query(lambda r: r.get("license_plate") == plate))
+
+    question = f"Permanently delete {plate} and its {record_count} maintenance record(s)?"
+    if not io_manager.confirm_action(question):
+        io_manager.display_message("Delete cancelled.")
+        return user
+
+    # Only remove the car's checks once the profile itself is gone.
+    if not data_manager.delete_user(plate):
+        io_manager.display_message("Could not delete the profile. Please try again.")
+        return user
+    data_manager.delete_records_for_plate(plate)
+    io_manager.display_message("Profile and records deleted. You have been logged out.")
+    return None
+
+
+# ======================================================================
+# THE MAIN LOOP: show the menu, do what the user picks, repeat
+# ======================================================================
