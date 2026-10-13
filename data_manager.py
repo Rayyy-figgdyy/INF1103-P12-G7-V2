@@ -108,3 +108,96 @@ def query(filter_fn) -> list[dict]:
     return matching
 
 
+def same_inputs(record_a: dict, record_b: dict) -> bool:
+    """Return True if the two checks match on every field in REPEAT_FIELDS."""
+    for field in REPEAT_FIELDS:
+        if record_a.get(field) != record_b.get(field):
+            return False
+    return True
+
+
+def find_repeat(record: dict) -> dict | None:
+    """Return the most recent saved check with the same inputs as record, or None."""
+    matches = query(lambda saved: same_inputs(saved, record))
+    if matches:
+        return matches[-1]              # checks are appended, so the last match is newest
+    return None
+
+
+def get_last_odometer(records: list[dict], license_plate: str) -> int | None:
+    """Return the highest odometer reading saved for this car, or None if there is none.
+    Readings from every part count, since the odometer belongs to the whole car."""
+    readings = []
+    for record in records:
+        odometer = record.get("current_odometer")
+        # Skip readings that aren't whole numbers (e.g. hand-edited as "45000" text).
+        if record.get("license_plate") == license_plate and isinstance(odometer, int):
+            readings.append(odometer)
+    if readings:
+        return max(readings)
+    return None
+
+
+def delete_records_for_plate(license_plate: str) -> int:
+    """Delete every saved check for one car. Returns how many were deleted.
+    main.py calls this right after delete_user, so a deleted profile leaves no checks."""
+    records = load()
+    remaining = []
+    for record in records:
+        if record.get("license_plate") != license_plate:
+            remaining.append(record)
+    removed_count = len(records) - len(remaining)
+    if removed_count > 0 and not write_list(DATA_FILE, remaining):
+        return 0                        # the write failed, so nothing was really deleted
+    return removed_count
+
+
+# ======================================================================
+# USER PROFILES: Create, Read, Update, Delete (data/users.json)
+# The license plate is the unique key: one profile per plate.
+# ======================================================================
+
+def load_users() -> list[dict]:
+    """Return every user profile ([] if none yet)."""
+    return read_list(USERS_FILE)
+
+
+def find_user_by_plate(license_plate: str) -> dict | None:
+    """Return the profile with this license plate, or None."""
+    for user in load_users():
+        if user.get("license_plate") == license_plate:
+            return user
+    return None
+
+
+def save_user(user: dict) -> bool:
+    """Create a profile, or replace the existing one with the same plate.
+    Returns True if it was saved."""
+    users_to_keep = []
+    for existing in load_users():
+        if existing.get("license_plate") != user["license_plate"]:
+            users_to_keep.append(existing)
+    users_to_keep.append(user)          # an old copy with this plate was left out above
+    return write_list(USERS_FILE, users_to_keep)
+
+
+def delete_user(license_plate: str) -> bool:
+    """Delete the profile with this plate (its checks are removed separately).
+    Returns False if no such profile exists or saving failed."""
+    users = load_users()
+    remaining = []
+    for user in users:
+        if user.get("license_plate") != license_plate:
+            remaining.append(user)
+    if len(remaining) == len(users):
+        return False                    # plate not found
+    return write_list(USERS_FILE, remaining)
+
+
+# ======================================================================
+# THE CAR LIST (data/cars.json)
+# Business rule 2: service intervals come ONLY from the stored manufacturer schedule
+# here, never from the user or the AI. Entries are checked on load so a typo in
+# cars.json can't crash the app.
+# ======================================================================
+
