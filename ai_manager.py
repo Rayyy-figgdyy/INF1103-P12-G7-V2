@@ -186,6 +186,115 @@ def call_gemini(prompt: str, manual_path: str | None, client) -> str | None:
         return None
 
 
+def manual_text(manual_path: str) -> str:
+    """Extract all text from the manual PDF (Groq cannot read PDF files).
+    Returns the text, or "" if the PDF is unreadable or has no text layer."""
+    try:
+        page_texts = []
+        with pdfplumber.open(manual_path) as pdf:
+            for page in pdf.pages:
+                page_texts.append(page.extract_text() or "")
+        text = "\n".join(page_texts).strip()
+    except Exception as error:
+        logger.error("Could not read text from %s: %s", manual_path, error)
+        return ""
+    if not text:
+        logger.warning("No text found in %s (is it a scanned image?).", manual_path)
+    return text
+
+
+def manual_excerpt(text: str, part_name: str) -> str:
+    """Keep only the manual lines that mention the part (plus one line either side).
+    Returns at most MAX_MANUAL_CHARS characters; uses the manual's start if no match."""
+    # Parts not in PART_SEARCH_WORDS fall back to the words of their own name.
+    if part_name in PART_SEARCH_WORDS:
+        search_words = PART_SEARCH_WORDS[part_name]
+    else:
+        search_words = []
+        for word in part_name.split():
+            if len(word) > 2:
+                search_words.append(word.lower().rstrip("s"))
+
+    lines = text.splitlines()
+
+    # Neighbouring lines are kept because schedule tables often wrap onto two lines.
+    lines_to_keep = set()
+    for line_number in range(len(lines)):
+        line = lines[line_number].lower()
+        for word in search_words:
+            if word in line:
+                lines_to_keep.update({line_number - 1, line_number, line_number + 1})
+
+    kept_lines = []
+    for line_number in sorted(lines_to_keep):
+        if 0 <= line_number < len(lines):
+            kept_lines.append(lines[line_number])
+
+    excerpt = "\n".join(kept_lines)
+    if not excerpt:
+        excerpt = text
+    # Size cap: stops Groq's free tier refusing the request with error 413.
+    if len(excerpt) > MAX_MANUAL_CHARS:
+        logger.warning("Manual text cut to %d characters for the backup AI.", MAX_MANUAL_CHARS)
+        excerpt = excerpt[:MAX_MANUAL_CHARS]
+    return excerpt
+
+
+def call_groq(prompt: str, manual_path: str | None, client, part_name: str = "") -> str | None:
+    """Send the prompt to Groq (backup AI) with a text excerpt of the manual in front.
+    Returns the reply text, or None on any error."""
+    content = prompt
+    if manual_path:
+        manual = manual_excerpt(manual_text(manual_path), part_name)
+        if manual:
+            content = ("OWNER'S MANUAL (the sections about this part, extracted from the PDF):\n"
+                       + manual + "\n\n" + prompt)
+        else:
+            content = "(The owner's manual could not be read for this request.)\n\n" + prompt
+    try:
+        model = os.environ.get("GROQ_MODEL") or DEFAULT_GROQ_MODEL
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": content}],
+            temperature=0,                                     # C4: repeatable answers
+            max_completion_tokens=GROQ_MAX_ANSWER_TOKENS,
+            reasoning_effort="low",                            # stays within free-tier limits
+            stream=False,
+        )
+        return response.choices[0].message.content
+    except Exception as error:
+        logger.error("Groq backup call failed: %s", error)
+        return None
+
+
+def ask_ai(prompt: str, manual_path: str | None, gemini, groq, part_name: str = "") -> tuple:
+    """Ask Gemini first and fall back to Groq if Gemini gives no reply.
+    Returns (reply text or None, "Gemini" / "Groq (backup)" / "none")."""
+    if gemini is not None:
+        reply = call_gemini(prompt, manual_path, gemini)
+        if reply is not None:
+            return reply, "Gemini"
+    # Backup: only reached if Gemini has no client or returned None.
+    if groq is not None:
+        logger.warning("Gemini unavailable -- trying the Groq backup.")
+        reply = call_groq(prompt, manual_path, groq, part_name)
+        if reply is not None:
+            return reply, "Groq (backup)"
+    return None, "none"
+
+
+def call_api(prompt: str, manual_path: str | None = None, client=None, backup_client=None) -> str | None:
+    """Send the prompt (and manual) to the AI; the brief's call_api step.
+    Returns the raw reply text, or None if every AI failed.
+    client/backup_client are only passed in by tests; normally they come from .env."""
+    # process() calls ask_ai() directly so it also learns which AI answered.
+    # No part name is passed here, so a Groq fallback gets the start of the manual.
+    if client is None and backup_client is None:
+        client, backup_client = get_clients()
+    reply, who_answered = ask_ai(prompt, manual_path, client, backup_client)
+    return reply
+
+
 # ======================================================================
 # STEP 3: parse_response
 # ======================================================================
@@ -254,3 +363,40 @@ def validate_response(data: dict | None) -> dict | None:
         "manual_reference": data["manual_reference"],
         "ai_status": "ok",
     }
+
+
+# ======================================================================
+# process -- steps 1 to 4 for one check (called by main.py)
+# ======================================================================
+
+def process(record: dict, manual_path: str | None = None, client=None,
+            backup_client=None, max_attempts: int = 2) -> dict:
+    """C2: run one check through the AI, retrying up to max_attempts times.
+    Returns a copy of the record with the AI's answer, or FALLBACK_ASSESSMENT
+    values if no valid answer was obtained. Never crashes."""
+    if client is None and backup_client is None:
+        client, backup_client = get_clients()
+
+    prompt = build_prompt(record)
+
+    for attempt in range(1, max_attempts + 1):
+        reply, who_answered = ask_ai(prompt, manual_path, client, backup_client,
+                                     record.get("part_name", ""))
+        answer = validate_response(parse_response(reply))
+
+        if answer is not None:
+            answer["ai_provider"] = who_answered        # shown as "Answered by"
+            result = dict(record)
+            result.update(answer)
+            return result
+
+        logger.warning("No valid AI response (attempt %d of %d).", attempt, max_attempts)
+        # Wait only if neither AI replied: "busy" errors (e.g. Gemini 503) often clear
+        # in seconds. A faulty reply is retried at once; no wait after the last try.
+        if reply is None and attempt < max_attempts:
+            time.sleep(RETRY_DELAY_SECONDS)
+
+    # All attempts failed: logic_manager.route will mark this "NEEDS MANUAL REVIEW".
+    result = dict(record)
+    result.update(FALLBACK_ASSESSMENT)
+    return result
