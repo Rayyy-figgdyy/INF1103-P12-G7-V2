@@ -1,6 +1,6 @@
 """
 Tests for data_manager: user CRUD, maintenance history CRUD, prompt records, the stored
-manufacturer schedule, and missing/corrupt file handling. Every test
+manufacturer schedule, repeat detection, and missing/corrupt file handling. Every test
 uses a temporary folder, so real data in data/ is never touched.
 """
 import contextlib
@@ -76,7 +76,7 @@ def test_corrupt_files_return_empty_instead_of_crashing():
         assert data_manager.load_users() == []
 
 
-# --- User CRUD ------------------------------------------------------------------
+# --- User CRUD ---------------------------------------------------------------
 
 
 def test_create_and_read_user():
@@ -116,7 +116,7 @@ def test_delete_user():
         assert data_manager.delete_user("SBA1234A") is False
 
 
-# --- Maintenance records ------------------------------------------------------------
+# --- Maintenance records ----------------------------------------------------
 
 
 def test_save_load_and_query_records():
@@ -445,7 +445,7 @@ def test_last_odometer_skips_damaged_entries():
     ) == 40_000
 
 
-# --- Repeated checks are detected --------------------------------------------
+# --- Repeated checks are detected -------------------------------------------
 
 CHECK = {
     "license_plate": "SBA1234A",
@@ -453,6 +453,11 @@ CHECK = {
     "last_service_date": "03-09-2025",
     "last_service_mileage": 40_000,
     "current_odometer": 49_000,
+    "check_date": "01-10-2026",
+    "interval_km": 10_000,
+    "interval_months": 12,
+    "action": "replace",
+    "interval_stage": "first",
 }
 
 
@@ -460,7 +465,21 @@ def test_identical_check_is_found_as_repeat():
     with temp_data_files():
         data_manager.save({
             **CHECK,
-            "check_date": "01-10-2026",
+            "urgency_score": 3,
+        })
+
+        previous = data_manager.find_repeat(
+            CHECK
+        )
+
+        assert previous is not None
+        assert previous["urgency_score"] == 3
+
+
+def test_different_check_date_is_not_a_repeat():
+    with temp_data_files():
+        data_manager.save({
+            **CHECK,
             "urgency_score": 3,
         })
 
@@ -469,27 +488,38 @@ def test_identical_check_is_found_as_repeat():
             "check_date": "09-10-2026",
         })
 
-        assert previous is not None
-        assert previous["urgency_score"] == 3
+        assert previous is None
 
 
-def test_any_changed_input_is_not_a_repeat():
+def test_any_changed_repeat_field_is_not_a_repeat():
     with temp_data_files():
-        data_manager.save(CHECK)
+        data_manager.save({
+            **CHECK,
+            "urgency_score": 3,
+        })
 
         changed_inputs = [
-            ("current_odometer", 49_500),
+            ("license_plate", "SGX88B"),
             ("part_name", "Coolant"),
             ("last_service_date", "04-09-2025"),
-            ("license_plate", "SGX88B"),
             ("last_service_mileage", 40_001),
+            ("current_odometer", 49_500),
+            ("check_date", "09-10-2026"),
+            ("interval_km", 20_000),
+            ("interval_months", 24),
+            ("action", "inspect"),
+            ("interval_stage", "repeat"),
         ]
 
         for field, new_value in changed_inputs:
-            assert data_manager.find_repeat({
+            changed_check = {
                 **CHECK,
                 field: new_value,
-            }) is None, field
+            }
+
+            assert data_manager.find_repeat(
+                changed_check
+            ) is None, field
 
 
 def test_no_history_means_no_repeat():
@@ -499,8 +529,7 @@ def test_no_history_means_no_repeat():
         ) is None
 
 
-# --- Maintenance history CRUD ------------------------------------------------
-
+# --- Maintenance history CRUD -----------------------------------------------
 
 SERVICE = {
     "license_plate": "SBA1234A",
