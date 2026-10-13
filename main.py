@@ -52,6 +52,23 @@ def earliest_service_date(user: dict) -> datetime.date | None:
     return datetime.date(year, 1, 1)
 
 
+def service_problem(user: dict, entries: list[dict], service_date: str, odometer: int,
+                    ignore_id: int | None = None) -> str | None:
+    """Run the history rules on one service: the odometer can't go backwards
+    (business rule 1) and can't grow faster than logic_manager.MAX_KM_PER_DAY.
+    Returns the first problem found, or None if the service fits."""
+    model_year = data_manager.get_model_year(user["car_model"])
+    return (logic_manager.check_service_odometer(entries, service_date, odometer, ignore_id)
+            or logic_manager.check_service_pace(entries, service_date, odometer,
+                                                model_year, ignore_id))
+
+
+def coe_limits(car_model: str) -> tuple:
+    """The allowed COE expiry range for this car: (earliest, latest) dates."""
+    return logic_manager.coe_date_range(data_manager.get_model_year(car_model),
+                                        datetime.date.today())
+
+
 def last_odometer_on_file(license_plate: str) -> int | None:
     """Return the highest odometer reading saved for this car, from its AI checks
     and its maintenance history together, or None if there is none."""
@@ -76,8 +93,8 @@ def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
     history = data_manager.history_for_plate(user["license_plate"])
     while True:
         invoice = io_manager.prompt_service_entry(parts, part_name, earliest_service_date(user))
-        problem = logic_manager.check_service_odometer(
-            history, invoice["service_date"], invoice["service_odometer"])
+        problem = service_problem(user, history, invoice["service_date"],
+                                  invoice["service_odometer"])
         if problem is None:
             break
         io_manager.display_message(f"  -> {problem}")
@@ -88,6 +105,13 @@ def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
     # check looks up the last service of one part at a time.
     saved_entries = []
     for name in invoice["part_names"]:
+        # The same part, date and odometer already saved = the same invoice typed twice.
+        if logic_manager.find_duplicate_service(history, name, invoice["service_date"],
+                                                invoice["service_odometer"]) is not None:
+            io_manager.display_message(f"  -> {name} on {invoice['service_date']} at "
+                                       f"{invoice['service_odometer']:,} km is already in your "
+                                       "history, so it was not added again.")
+            continue
         entry = {
             "license_plate": user["license_plate"],
             "part_name": name,
@@ -144,10 +168,14 @@ def edit_service_flow(user: dict) -> None:
 
     parts = data_manager.list_parts(user["car_model"])
     updated = io_manager.prompt_updated_service(chosen, parts, earliest_service_date(user))
-    # Business rule 1: the edited odometer must still fit the other services.
-    problem = logic_manager.check_service_odometer(
-        entries, updated["service_date"], updated["service_odometer"],
-        ignore_id=chosen.get("service_id"))
+    # The edited service must still fit the other services, and must not become an
+    # exact copy of another entry.
+    problem = service_problem(user, entries, updated["service_date"],
+                              updated["service_odometer"], chosen.get("service_id"))
+    if problem is None and logic_manager.find_duplicate_service(
+            entries, updated["part_name"], updated["service_date"],
+            updated["service_odometer"], chosen.get("service_id")) is not None:
+        problem = "That would be an exact copy of a service already in your history."
     if problem is not None:
         io_manager.display_message(f"  -> {problem}\nNothing was changed.")
         return
@@ -223,8 +251,17 @@ def check_part_flow(user: dict) -> None:
 
     # Business rule 1: the new odometer reading can't go backwards. main.py looks up
     # the last reading because io_manager is not allowed to read the data files.
+    # Plausibility: no more than MAX_KM_PER_DAY since the latest reading on file.
+    my_checks = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
+    latest = logic_manager.latest_reading(data_manager.history_for_plate(user["license_plate"]),
+                                          my_checks)
+    max_plausible = None
+    if latest is not None:
+        max_plausible = logic_manager.max_plausible_odometer(latest[0], latest[1],
+                                                             datetime.date.today())
     current_odometer = io_manager.prompt_current_odometer(
-        last_service["service_odometer"], last_odometer_on_file(user["license_plate"]))
+        last_service["service_odometer"], last_odometer_on_file(user["license_plate"]),
+        max_plausible)
 
     raw_record = {
         "license_plate": user["license_plate"],
@@ -313,7 +350,7 @@ def register_flow() -> dict | None:
         "car_model": car_model,
         # Brand New / Used comes from cars.json, not from the user.
         "car_condition": data_manager.find_car(car_model)["condition"],
-        "coe_expiry_date": io_manager.prompt_coe_expiry(),
+        "coe_expiry_date": io_manager.prompt_coe_expiry(*coe_limits(car_model)),
     }
 
     if not data_manager.save_user(profile):
@@ -327,7 +364,7 @@ def register_flow() -> dict | None:
 def update_profile_flow(user: dict) -> dict:
     """UPDATE the user's name or COE expiry date (plate and car are fixed).
     Returns the updated profile, or the unchanged one if saving failed."""
-    updated = io_manager.prompt_updated_profile(user)
+    updated = io_manager.prompt_updated_profile(user, *coe_limits(user["car_model"]))
     if not data_manager.save_user(updated):
         io_manager.display_message("Could not save your changes. Please try again.")
         return user

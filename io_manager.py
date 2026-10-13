@@ -254,18 +254,37 @@ def prompt_car_choice(car_models: list[str]) -> str:
     return prompt_number_choice("Car number", car_models)
 
 
-def prompt_coe_expiry() -> str:
-    """Ask for the COE expiry date. Returns it as 'DD-MM-YYYY'."""
+def coe_problem(coe: datetime.date, earliest: datetime.date | None,
+                latest: datetime.date | None) -> str | None:
+    """Check a COE expiry date is inside the allowed range (worked out by
+    logic_manager.coe_date_range). Returns what's wrong, or None if it's fine."""
+    if earliest is not None and coe < earliest:
+        return (f"cannot be before {earliest.strftime(DATE_FORMAT)}, "
+                f"because your car is a {earliest.year} model")
+    if latest is not None and coe > latest:
+        return (f"cannot be after {latest.strftime(DATE_FORMAT)}: "
+                "a COE lasts at most 10 years")
+    return None
+
+
+def prompt_coe_expiry(earliest: datetime.date | None = None,
+                      latest: datetime.date | None = None) -> str:
+    """Ask for the COE expiry date, between earliest and latest if given.
+    Returns it as 'DD-MM-YYYY'."""
     while True:
         # Unlike service dates, a past date IS allowed: an expired COE is real
         # information that the business rules act on.
         coe = parse_date(input(f"COE expiry date ({DATE_HINT}): ").strip())
-        if coe:
+        if coe is None:
+            print(f"  -> COE expiry date must be a real date in {DATE_HINT} format. Please try again.")
+        elif coe_problem(coe, earliest, latest) is not None:
+            print(f"  -> COE expiry date {coe_problem(coe, earliest, latest)}. Please try again.")
+        else:
             return coe.strftime(DATE_FORMAT)
-        print(f"  -> COE expiry date must be a real date in {DATE_HINT} format. Please try again.")
 
 
-def prompt_updated_profile(current: dict) -> dict:
+def prompt_updated_profile(current: dict, earliest: datetime.date | None = None,
+                           latest: datetime.date | None = None) -> dict:
     """Let the user change their name and COE date (Enter keeps the old value).
     Returns an updated copy of the profile; main.py saves it."""
     print("\n--- Update profile (press Enter to keep the current value) ---")
@@ -284,10 +303,13 @@ def prompt_updated_profile(current: dict) -> dict:
         if not typed:
             break                      # empty input = keep the old date
         coe = parse_date(typed)
-        if coe:
+        if coe is None:
+            print(f"  -> Use {DATE_HINT}, or press Enter to keep.")
+        elif coe_problem(coe, earliest, latest) is not None:
+            print(f"  -> COE expiry date {coe_problem(coe, earliest, latest)}.")
+        else:
             updated["coe_expiry_date"] = coe.strftime(DATE_FORMAT)
             break
-        print(f"  -> Use {DATE_HINT}, or press Enter to keep.")
     return updated
 
 
@@ -312,8 +334,10 @@ def prompt_part_choice(parts: list[str]) -> str:
     return prompt_number_choice("Part number", parts)
 
 
-def prompt_current_odometer(last_service_km: int, last_known_odometer: int | None) -> int:
-    """Ask for today's odometer reading for an urgency check. Returns it as an int."""
+def prompt_current_odometer(last_service_km: int, last_known_odometer: int | None,
+                            max_plausible: int | None = None) -> int:
+    """Ask for today's odometer reading for an urgency check. max_plausible is the
+    highest believable reading (from logic_manager). Returns it as an int."""
     if last_known_odometer is not None:
         print(f"(Last odometer reading on file for this car: {last_known_odometer:,} km)")
 
@@ -325,6 +349,10 @@ def prompt_current_odometer(last_service_km: int, last_known_odometer: int | Non
             print(f"  -> Can't be lower than the odometer at last service ({last_service_km:,} km). Please try again.")
         elif last_known_odometer is not None and current_odometer < last_known_odometer:
             print(f"  -> Can't be lower than the last reading on file ({last_known_odometer:,} km). Please try again.")
+        elif max_plausible is not None and current_odometer > max_plausible:
+            # Plausibility rule: no more than 2,000 km a day since the last reading.
+            print(f"  -> {current_odometer:,} km is more than the car could have driven since your last "
+                  f"reading (at most {max_plausible:,} km). Please check and try again.")
         else:
             return current_odometer
 

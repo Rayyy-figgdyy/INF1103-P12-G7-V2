@@ -68,3 +68,11 @@ def test_service_date_cannot_be_before_the_model_year_or_in_the_future():
     assert io_manager.date_problem(datetime.date(2019, 12, 31), start_2020) is not None
     assert io_manager.date_problem(datetime.date(2020, 1, 1), start_2020) is None
     assert io_manager.date_problem(datetime.date.today() + datetime.timedelta(days=1), None) is not None
+
+
+def test_coe_must_be_between_model_year_and_ten_years_ahead():
+    import datetime
+    earliest, latest = datetime.date(2020, 1, 1), datetime.date(2036, 10, 13)
+    assert io_manager.coe_problem(datetime.date(2015, 1, 1), earliest, latest) is not None
+    assert io_manager.coe_problem(datetime.date(2099, 1, 1), earliest, latest) is not None
+    assert io_manager.coe_problem(datetime.date(2025, 1, 1), earliest, latest) is None  # expired is allowed

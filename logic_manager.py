@@ -26,6 +26,13 @@ SAFETY_CRITICAL_PARTS = ("brake pads", "tyres")
 DAYS_PER_MONTH = 30.44           # average days in a month (so 24 months = 731 days)
 COE_DEFER_WINDOW_DAYS = 180      # "COE ends soon" = within 180 days (about 6 months)
 
+# Plausibility limit for odometer readings: even a hard-driven car can't cover more
+# than this many km a day on average, so a bigger jump is treated as a typing mistake.
+MAX_KM_PER_DAY = 2_000
+
+# A Singapore COE lasts 10 years, so a COE can't expire more than 10 years from today.
+COE_MAX_YEARS = 10
+
 # Outcomes that need the owner's attention: any outcome starting with one of these
 # is listed in menu option 3.
 URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED", "NEEDS MANUAL REVIEW")
@@ -329,3 +336,105 @@ def latest_check_for_service(records: list[dict], entry: dict) -> dict | None:
                 and record.get("last_service_mileage") == entry.get("service_odometer")):
             found = record              # keep going: a later match is newer
     return found
+
+
+
+# ======================================================================
+# PLAUSIBILITY RULES FOR WHAT THE USER TYPES
+# ======================================================================
+
+def add_years(start: datetime.date, years: int) -> datetime.date:
+    """Return the same day `years` years later (29 Feb becomes 28 Feb if needed)."""
+    try:
+        return start.replace(year=start.year + years)
+    except ValueError:                  # 29 Feb in a year that isn't a leap year
+        return start.replace(year=start.year + years, day=28)
+
+
+def coe_date_range(model_year: int | None, today: datetime.date) -> tuple:
+    """The COE expiry dates that make sense for a car: not before 1 January of its
+    model year (an expired COE is allowed, our rules act on it), and not more than
+    COE_MAX_YEARS from today. Returns (earliest, latest); earliest is None if the
+    model year is unknown."""
+    earliest = datetime.date(model_year, 1, 1) if model_year else None
+    return earliest, add_years(today, COE_MAX_YEARS)
+
+
+def km_pace_problem(from_date, from_km: int, to_date, to_km: int) -> str | None:
+    """Check the odometer didn't grow by more than MAX_KM_PER_DAY a day between two
+    readings (a same-day pair counts as 1 day). Dates may be date objects or saved
+    'DD-MM-YYYY' text. Returns a message if the jump is impossible, else None."""
+    start, end = to_date_any(from_date), to_date_any(to_date)
+    if start is None or end is None or to_km <= from_km:
+        return None                     # nothing to compare, or no growth at all
+    days = max(1, (end - start).days)
+    if to_km - from_km > MAX_KM_PER_DAY * days:
+        return (f"{to_km - from_km:,} km in {days:,} day(s) is more than "
+                f"{MAX_KM_PER_DAY:,} km a day, so it looks like a typing mistake.")
+    return None
+
+
+def to_date_any(value) -> datetime.date | None:
+    """Accept a date object or saved 'DD-MM-YYYY' text; return a date or None."""
+    if isinstance(value, datetime.date):
+        return value
+    return to_date(value)
+
+
+def check_service_pace(entries: list[dict], service_date: str, odometer: int,
+                       model_year: int | None, ignore_id: int | None = None) -> str | None:
+    """A service's odometer must be reachable at MAX_KM_PER_DAY: from 0 km on
+    1 January of the model year, and from/to every other service of this car.
+    ignore_id skips the entry being edited. Returns a message, or None if fine."""
+    if model_year:
+        problem = km_pace_problem(datetime.date(model_year, 1, 1), 0, service_date, odometer)
+        if problem:
+            return f"Since your car's model year began: {problem}"
+    for entry in entries:
+        if ignore_id is not None and entry.get("service_id") == ignore_id:
+            continue
+        other_km = entry.get("service_odometer")
+        if not isinstance(other_km, int):
+            continue
+        problem = (km_pace_problem(entry.get("service_date"), other_km, service_date, odometer)
+                   or km_pace_problem(service_date, odometer, entry.get("service_date"), other_km))
+        if problem:
+            return f"Compared with {entry.get('part_name')} on {entry.get('service_date')}: {problem}"
+    return None
+
+
+def max_plausible_odometer(last_date, last_km: int, today: datetime.date) -> int:
+    """The highest believable reading today, given the last reading on file:
+    last_km + MAX_KM_PER_DAY for each day since then (at least one day)."""
+    start = to_date_any(last_date) or today
+    days = max(1, (today - start).days)
+    return last_km + MAX_KM_PER_DAY * days
+
+
+def latest_reading(entries: list[dict], checks: list[dict]) -> tuple | None:
+    """The car's highest odometer reading on file and its date, from service entries
+    and AI checks together. Returns (date_text, km) or None if there is none."""
+    readings = []
+    for entry in entries:
+        if isinstance(entry.get("service_odometer"), int) and to_date(entry.get("service_date")):
+            readings.append((entry["service_odometer"], entry["service_date"]))
+    for check in checks:
+        if isinstance(check.get("current_odometer"), int) and to_date(check.get("check_date")):
+            readings.append((check["current_odometer"], check["check_date"]))
+    if not readings:
+        return None
+    km, date_text = max(readings, key=lambda r: (r[0], to_date(r[1])))
+    return date_text, km
+
+
+def find_duplicate_service(entries: list[dict], part_name: str, service_date: str,
+                           odometer: int, ignore_id: int | None = None) -> dict | None:
+    """Return an existing entry with the same part, date and odometer (the same service
+    typed twice), or None. ignore_id skips the entry being edited."""
+    for entry in entries:
+        if ignore_id is not None and entry.get("service_id") == ignore_id:
+            continue
+        if (entry.get("part_name") == part_name and entry.get("service_date") == service_date
+                and entry.get("service_odometer") == odometer):
+            return entry
+    return None

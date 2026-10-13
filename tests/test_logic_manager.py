@@ -218,3 +218,55 @@ def test_latest_check_is_matched_to_its_service():
                "last_service_mileage": 48_000, "urgency_score": 3}]
     assert logic_manager.latest_check_for_service(checks, HISTORY[1])["urgency_score"] == 8
     assert logic_manager.latest_check_for_service(checks, HISTORY[2]) is None
+
+
+# --- Plausibility rules: distances, COE range, duplicates ----------------------------
+
+import datetime
+
+
+def test_more_than_2000_km_a_day_is_refused():
+    assert logic_manager.km_pace_problem("01-06-2026", 63_000, "13-10-2026", 1_999_999) is not None
+    assert logic_manager.km_pace_problem("01-06-2026", 63_000, "13-10-2026", 69_800) is None
+    # Same day counts as one day: up to 2,000 km is still believable, 2,001 is not.
+    assert logic_manager.km_pace_problem("01-06-2026", 63_000, "01-06-2026", 65_000) is None
+    assert logic_manager.km_pace_problem("01-06-2026", 63_000, "01-06-2026", 65_001) is not None
+
+
+def test_service_km_must_be_reachable_since_the_model_year():
+    # A 2025 car can't have done 300,000 km by May 2025 (124 days x 2,000 = 248,000 max).
+    assert logic_manager.check_service_pace([], "05-05-2025", 300_000, 2025) is not None
+    assert logic_manager.check_service_pace([], "05-05-2025", 10_000, 2025) is None
+
+
+def test_service_km_must_be_reachable_from_other_services():
+    history = [{"service_id": 1, "part_name": "Tyres", "service_date": "01-06-2026",
+                "service_odometer": 63_000}]
+    assert logic_manager.check_service_pace(history, "03-06-2026", 70_000, 2020) is not None
+    assert logic_manager.check_service_pace(history, "03-06-2026", 64_000, 2020) is None
+    # The entry being edited is not compared with itself.
+    assert logic_manager.check_service_pace(history, "03-06-2026", 70_000, 2020, ignore_id=1) is None
+
+
+def test_highest_believable_reading_today():
+    history = [{"service_date": "01-06-2026", "service_odometer": 63_000}]
+    checks = [{"check_date": "12-10-2026", "current_odometer": 69_500}]
+    assert logic_manager.latest_reading(history, checks) == ("12-10-2026", 69_500)
+    assert logic_manager.max_plausible_odometer("12-10-2026", 69_500,
+                                                datetime.date(2026, 10, 13)) == 71_500
+
+
+def test_coe_range_is_model_year_to_ten_years_ahead():
+    earliest, latest = logic_manager.coe_date_range(2020, datetime.date(2026, 10, 13))
+    assert earliest == datetime.date(2020, 1, 1)
+    assert latest == datetime.date(2036, 10, 13)
+    # 29 Feb + 10 years falls back to 28 Feb.
+    assert logic_manager.coe_date_range(None, datetime.date(2028, 2, 29)) == (None, datetime.date(2038, 2, 28))
+
+
+def test_exact_duplicate_service_is_found():
+    history = [{"service_id": 1, "part_name": "Engine Oil", "service_date": "20-03-2026",
+                "service_odometer": 58_000}]
+    assert logic_manager.find_duplicate_service(history, "Engine Oil", "20-03-2026", 58_000) is not None
+    assert logic_manager.find_duplicate_service(history, "Tyres", "20-03-2026", 58_000) is None
+    assert logic_manager.find_duplicate_service(history, "Engine Oil", "20-03-2026", 58_000, ignore_id=1) is None
