@@ -1,0 +1,50 @@
+[
+  {
+    "license_plate": "SMZ2020K",
+    "part_name": "Engine Oil",
+    "service_date": "20-03-2026",
+    "service_odometer": 58000,
+    "notes": "",
+    "service_id": 1
+  },
+  {
+    "license_plate": "SMZ2020K",
+    "part_name": "Brake Pads",
+    "service_date": "10-08-2024",
+    "service_odometer": 45000,
+    "notes": "",
+    "service_id": 2
+  },
+  {
+    "license_plate": "SMZ2020K",
+    "part_name": "Spark Plugs",
+    "service_date": "05-01-2023",
+    "service_odometer": 35000,
+    "notes": "",
+    "service_id": 3
+  },
+  {
+    "license_plate": "SMZ2020K",
+    "part_name": "Tyres",
+    "service_date": "01-06-2026",
+    "service_odometer": 63000,
+    "notes": "",
+    "service_id": 4
+  },
+  {
+    "license_plate": "SMZ2020K",
+    "part_name": "Engine Air Filter",
+    "service_date": "12-12-2023",
+    "service_odometer": 40000,
+    "notes": "",
+    "service_id": 5
+  },
+  {
+    "license_plate": "SMZ2020K",
+    "part_name": "Coolant",
+    "service_date": "18-09-2021",
+    "service_odometer": 25000,
+    "notes": "",
+    "service_id": 6
+  }
+]

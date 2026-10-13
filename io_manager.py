@@ -28,16 +28,20 @@ Not logged in
 MENU_LOGGED_IN = """
 ==== Car Maintenance & Service Risk Tracker ====
 Logged in: {name} | {plate} | {car_model}
---- Maintenance ---
-1) Check a part (AI urgency assessment)
-2) View my maintenance history
-3) View my urgent / overdue items
+--- Maintenance history ---
+ 1) Add maintenance history
+ 2) View maintenance history
+ 3) Edit maintenance history
+ 4) Delete maintenance history
+--- Urgency checks ---
+ 5) Check a part (AI urgency assessment)
+ 6) View my urgent / overdue items
 --- Account ---
-4) View my profile
-5) Update my profile
-6) Delete my profile
-7) Logout
-8) Exit
+ 7) View my profile
+ 8) Update my profile
+ 9) Delete my profile
+10) Logout
+11) Exit
 """
 
 # Singapore plate, e.g. SBA1234A: 1-3 letters, 1-4 digits, 1 letter, nothing else.
@@ -147,6 +151,24 @@ def prompt_number_choice(label: str, options: list[str]) -> str:
         if typed.isdigit() and 1 <= int(typed) <= len(options):
             return options[int(typed) - 1]          # menu starts at 1, list index at 0
         print(f"  -> Please enter a number from 1 to {len(options)}.")
+
+
+def prompt_multi_choice(label: str, options: list[str]) -> list[str]:
+    """Print options as a numbered list and ask for one or more numbers, separated by
+    commas or spaces (e.g. "4,6" or "4 6"). Returns the chosen options in list order,
+    each once."""
+    for number, option in enumerate(options, start=1):
+        print(f"  {number:>2}) {option}")
+    while True:
+        typed = input(f"{label} (e.g. 4,6): ").replace(",", " ").split()
+        if typed and all(t.isdigit() and 1 <= int(t) <= len(options) for t in typed):
+            chosen = []
+            for t in typed:
+                option = options[int(t) - 1]
+                if option not in chosen:        # typing "4,4" only counts once
+                    chosen.append(option)
+            return chosen
+        print(f"  -> Enter one or more numbers from 1 to {len(options)}, separated by commas.")
 
 
 def confirm_action(question: str) -> bool:
@@ -277,15 +299,8 @@ def prompt_part_choice(parts: list[str]) -> str:
     return prompt_number_choice("Part number", parts)
 
 
-def prompt_service_details(last_known_odometer: int | None) -> dict:
-    """Ask for last service date and odometer (from the invoice) and today's odometer.
-    Returns a dict with last_service_date, last_service_mileage, current_odometer."""
-    print("\nFrom your last workshop invoice for this part:")
-    last_service_date = prompt_past_date("Date of last service")
-    last_service_mileage = prompt_km("Odometer at last service (km)")
-
-    # last_known_odometer = highest saved reading for this car (from main.py),
-    # or None if the car has no saved checks yet.
+def prompt_current_odometer(last_service_km: int, last_known_odometer: int | None) -> int:
+    """Ask for today's odometer reading for an urgency check. Returns it as an int."""
     if last_known_odometer is not None:
         print(f"(Last odometer reading on file for this car: {last_known_odometer:,} km)")
 
@@ -293,18 +308,98 @@ def prompt_service_details(last_known_odometer: int | None) -> dict:
     # reading may not be below the last-service reading or the last reading on file.
     while True:
         current_odometer = prompt_km("Current odometer reading (km)")
-        if current_odometer < last_service_mileage:
-            print(f"  -> Can't be lower than the odometer at last service ({last_service_mileage:,} km). Please try again.")
+        if current_odometer < last_service_km:
+            print(f"  -> Can't be lower than the odometer at last service ({last_service_km:,} km). Please try again.")
         elif last_known_odometer is not None and current_odometer < last_known_odometer:
             print(f"  -> Can't be lower than the last reading on file ({last_known_odometer:,} km). Please try again.")
         else:
+            return current_odometer
+
+
+# ======================================================================
+# MAINTENANCE HISTORY QUESTIONS (add, choose, edit)
+# ======================================================================
+
+def prompt_service_entry(parts: list[str], part_name: str | None = None) -> dict:
+    """Ask for one workshop invoice: the part(s) serviced, then the date, odometer and
+    an optional note, typed once for the whole invoice. part_name skips the part
+    question when it is already known.
+    Returns {"part_names": [...], "service_date", "service_odometer", "notes"}."""
+    print("\n--- Add an invoice (from your workshop invoice) ---")
+    if part_name is None:
+        print("Which parts were serviced on this invoice?")
+        part_names = prompt_multi_choice("Part numbers", parts)
+    else:
+        print(f"Part: {part_name}")
+        part_names = [part_name]
+    service_date = prompt_past_date("Service date")
+    service_odometer = prompt_km("Odometer at service (km)")
+    notes = input("Workshop / notes (optional, press Enter to skip): ").strip()
+    return {"part_names": part_names, "service_date": service_date,
+            "service_odometer": service_odometer, "notes": notes}
+
+
+def prompt_service_choice(entries: list[dict], action: str) -> dict | None:
+    """Show the car's services as a numbered list and ask which one to edit or delete.
+    Entering 0 cancels. Returns the chosen entry, or None if cancelled."""
+    print(f"\nWhich service do you want to {action}? (0 = cancel)")
+    for number, entry in enumerate(entries, start=1):
+        print(f"  {number:>2}) {show_date(entry.get('service_date'))}  "
+              f"{str(entry.get('part_name')):<18} {km(entry.get('service_odometer')):>9} km  "
+              f"{entry.get('notes') or ''}")
+    while True:
+        typed = input("Service number: ").strip()
+        if typed == "0":
+            return None
+        if typed.isdigit() and 1 <= int(typed) <= len(entries):
+            return entries[int(typed) - 1]
+        print(f"  -> Please enter a number from 1 to {len(entries)}, or 0 to cancel.")
+
+
+def prompt_updated_service(current: dict, parts: list[str]) -> dict:
+    """Let the user change a service's part, date, odometer and note (Enter keeps the
+    old value). Returns an updated copy; main.py checks it and saves it."""
+    print("\n--- Edit service (press Enter to keep the current value) ---")
+    updated = dict(current)             # edit a copy; main.py saves it
+
+    print("Parts: " + ", ".join(f"{n}) {p}" for n, p in enumerate(parts, start=1)))
+    while True:
+        typed = input(f"Part number [{current.get('part_name')}]: ").strip()
+        if not typed:
+            break
+        if typed.isdigit() and 1 <= int(typed) <= len(parts):
+            updated["part_name"] = parts[int(typed) - 1]
+            break
+        print(f"  -> Enter a number from 1 to {len(parts)}, or press Enter to keep.")
+
+    while True:
+        typed = input(f"Service date ({DATE_HINT}) [{show_date(current.get('service_date'))}]: ").strip()
+        if not typed:
+            break
+        date = parse_date(typed)
+        if date is None:
+            print(f"  -> Use {DATE_HINT}, or press Enter to keep.")
+        elif date > datetime.date.today():
+            print("  -> The service date cannot be in the future.")
+        else:
+            updated["service_date"] = date.strftime(DATE_FORMAT)
             break
 
-    return {
-        "last_service_date": last_service_date,
-        "last_service_mileage": last_service_mileage,
-        "current_odometer": current_odometer,
-    }
+    while True:
+        typed = input(f"Odometer at service (km) [{km(current.get('service_odometer'))}]: ").strip().replace(",", "")
+        if not typed:
+            break
+        if typed.isdigit() and int(typed) <= MAX_ODOMETER_KM:
+            updated["service_odometer"] = int(typed)
+            break
+        print("  -> Enter a whole number of km, or press Enter to keep.")
+
+    typed = input(f"Workshop / notes [{current.get('notes') or ''}] (type - to clear): ").strip()
+    if typed == "-":
+        updated["notes"] = ""
+    elif typed:
+        updated["notes"] = typed
+    return updated
 
 
 # ======================================================================
@@ -378,3 +473,33 @@ def display_repeated(previous: dict) -> None:
     print(f"You checked this part with the same details on {show_date(previous.get('check_date'))}, "
           "so it was not sent to the AI again. Your saved assessment:")
     display_record(previous)
+
+
+def display_service(entry: dict) -> None:
+    """Print one service entry, e.g. after it has been added or edited."""
+    print(f"  {show_date(entry.get('service_date'))}  {str(entry.get('part_name')):<18} at "
+          f"{km(entry.get('service_odometer')):>9} km  {entry.get('notes') or ''}")
+
+
+def display_history(entries: list[dict]) -> None:
+    """Print the car's maintenance history as a table, newest first. Each entry may carry
+    "latest_check" (added by main.py): the newest AI urgency check based on that service."""
+    if not entries:
+        print("\nNo services in your history yet.")
+        return
+    print(f"\n{'Serviced':<12}{'Part':<19}{'Odometer':>10}  {'Urgency':<8}{'Checked':<12}"
+          f"{'Outcome':<34}Notes")
+    for entry in entries:
+        check = entry.get("latest_check")
+        if check is None:
+            urgency_text, checked, outcome = "-", "-", "not checked yet"
+        else:
+            urgency = check.get("urgency_score")
+            urgency_text = "-" if urgency is None else str(urgency)
+            checked = show_date(check.get("check_date"))
+            outcome = str(check.get("outcome")).split(" - ")[0]   # e.g. "URGENT"
+        print(f"{show_date(entry.get('service_date')):<12}"
+              f"{str(entry.get('part_name'))[:18]:<19}"
+              f"{km(entry.get('service_odometer')):>10}  "
+              f"{urgency_text:<8}{checked:<12}{outcome[:33]:<34}"
+              f"{entry.get('notes') or ''}")

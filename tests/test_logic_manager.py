@@ -166,3 +166,55 @@ def test_is_urgent():
     assert logic_manager.is_urgent({}) is False
     # The AI couldn't assess it, so the owner still needs to act.
     assert logic_manager.is_urgent({"outcome": "NEEDS MANUAL REVIEW - AI assessment unavailable"}) is True
+
+
+# --- Maintenance history rules ------------------------------------------------------
+
+HISTORY = [
+    {"service_id": 1, "part_name": "Engine Oil", "service_date": "20-03-2025", "service_odometer": 48_000},
+    {"service_id": 2, "part_name": "Engine Oil", "service_date": "20-03-2026", "service_odometer": 58_000},
+    {"service_id": 3, "part_name": "Coolant", "service_date": "18-09-2021", "service_odometer": 25_000},
+]
+
+
+def test_latest_service_picks_the_newest_of_that_part():
+    assert logic_manager.latest_service(HISTORY, "Engine Oil")["service_id"] == 2
+    assert logic_manager.latest_service(HISTORY, "Tyres") is None
+
+
+def test_sort_history_is_newest_first():
+    ids = [e["service_id"] for e in logic_manager.sort_history(HISTORY)]
+    assert ids == [2, 1, 3]
+
+
+def test_odometer_must_go_up_over_time():
+    # A later date with fewer km than an earlier service is refused...
+    assert logic_manager.check_service_odometer(HISTORY, "01-06-2026", 50_000) is not None
+    # ...and so is an earlier date with more km than a later service.
+    assert logic_manager.check_service_odometer(HISTORY, "01-01-2022", 60_000) is not None
+    # A reading that fits between the others is fine.
+    assert logic_manager.check_service_odometer(HISTORY, "01-06-2026", 60_000) is None
+
+
+def test_odometer_check_ignores_the_entry_being_edited():
+    assert logic_manager.check_service_odometer(HISTORY, "20-03-2026", 57_000) is None
+    assert logic_manager.check_service_odometer(HISTORY, "21-03-2026", 57_000) is not None
+    assert logic_manager.check_service_odometer(HISTORY, "21-03-2026", 57_000, ignore_id=2) is None
+
+
+def test_only_the_newest_check_per_part_counts():
+    checks = [{"part_name": "Engine Oil", "outcome": "URGENT - Service immediately"},
+              {"part_name": "Coolant", "outcome": "OK - Not urgent"},
+              {"part_name": "Engine Oil", "outcome": "OK - Not urgent"}]
+    latest = logic_manager.latest_check_per_part(checks)
+    assert len(latest) == 2
+    assert not any(logic_manager.is_urgent(r) for r in latest)
+
+
+def test_latest_check_is_matched_to_its_service():
+    checks = [{"part_name": "Engine Oil", "last_service_date": "20-03-2026",
+               "last_service_mileage": 58_000, "urgency_score": 8},
+              {"part_name": "Engine Oil", "last_service_date": "20-03-2025",
+               "last_service_mileage": 48_000, "urgency_score": 3}]
+    assert logic_manager.latest_check_for_service(checks, HISTORY[1])["urgency_score"] == 8
+    assert logic_manager.latest_check_for_service(checks, HISTORY[2]) is None

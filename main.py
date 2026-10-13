@@ -2,8 +2,11 @@
 main.py -- entry point of the Car Maintenance & Service Risk Tracker.
 Run it with: python main.py
 
-Shows the menu, handles login and profile CRUD, and runs each part check through
-the pipeline:  io_manager -> ai_manager -> logic_manager -> data_manager.
+Shows the menu, handles login, profile CRUD and maintenance history CRUD, and runs
+each urgency check through the pipeline:
+    io_manager -> ai_manager -> logic_manager -> data_manager.
+An urgency check is based on the latest service of that part in the owner's
+maintenance history; identical checks are answered from prompt_records.json.
 main.py is the only file that talks to all four managers; they never call each other.
 Procedural only (C1: no classes); the logged-in user lives in main() as current_user.
 
@@ -40,8 +43,139 @@ def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
     return final_record
 
 
+def last_odometer_on_file(license_plate: str) -> int | None:
+    """Return the highest odometer reading saved for this car, from its AI checks
+    and its maintenance history together, or None if there is none."""
+    all_saved = data_manager.load() + data_manager.load_history()
+    return data_manager.get_last_odometer(all_saved, license_plate)
+
+
+# ======================================================================
+# MAINTENANCE HISTORY: Create, Read, Update, Delete ("CRUD")
+# ======================================================================
+
+def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
+    """Ask for one invoice and add one history entry per part on it (they share the
+    date, odometer and note), re-asking if the odometer doesn't fit with the other
+    services (business rule 1). part_name limits the invoice to that one part.
+    Returns the saved entries ([] if cancelled or saving failed)."""
+    parts = data_manager.list_parts(user["car_model"])
+    if not parts:
+        io_manager.display_message("No service schedule is available for your car.")
+        return []
+
+    history = data_manager.history_for_plate(user["license_plate"])
+    while True:
+        invoice = io_manager.prompt_service_entry(parts, part_name)
+        problem = logic_manager.check_service_odometer(
+            history, invoice["service_date"], invoice["service_odometer"])
+        if problem is None:
+            break
+        io_manager.display_message(f"  -> {problem}")
+        if not io_manager.confirm_action("Enter this invoice again?"):
+            return []
+
+    # Each part gets its own entry, because each part has its own schedule and a
+    # check looks up the last service of one part at a time.
+    saved_entries = []
+    for name in invoice["part_names"]:
+        entry = {
+            "license_plate": user["license_plate"],
+            "part_name": name,
+            "service_date": invoice["service_date"],
+            "service_odometer": invoice["service_odometer"],
+            "notes": invoice["notes"],
+        }
+        saved = data_manager.add_service(entry)
+        if saved is None:
+            io_manager.display_message(f"Could not save the {name} service. Please try again.")
+        else:
+            saved_entries.append(saved)
+
+    if saved_entries:
+        io_manager.display_message(f"\n{len(saved_entries)} service(s) added to your history:")
+        for saved in saved_entries:
+            io_manager.display_service(saved)
+    return saved_entries
+
+
+def add_service_flow(user: dict) -> None:
+    """Menu option 1: CREATE history entries from one invoice (one entry per part)."""
+    save_new_services(user)
+
+
+def history_flow(user: dict) -> None:
+    """Menu option 2: READ the car's maintenance history, newest first, with the
+    latest AI urgency check for each service next to it."""
+    entries = logic_manager.sort_history(data_manager.history_for_plate(user["license_plate"]))
+    if not entries:
+        io_manager.display_message(f"\nNo services in the history for {user['license_plate']} yet. "
+                                   "Choose 1 to add the services you've had done.")
+        return
+
+    my_checks = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
+    rows = []
+    for entry in entries:
+        row = dict(entry)               # a copy, so the saved entry isn't changed
+        row["latest_check"] = logic_manager.latest_check_for_service(my_checks, entry)
+        rows.append(row)
+    io_manager.display_history(rows)
+
+
+def edit_service_flow(user: dict) -> None:
+    """Menu option 3: UPDATE one service entry (part, date, odometer or note)."""
+    entries = logic_manager.sort_history(data_manager.history_for_plate(user["license_plate"]))
+    if not entries:
+        io_manager.display_message("\nYour history is empty, so there is nothing to edit.")
+        return
+    chosen = io_manager.prompt_service_choice(entries, "edit")
+    if chosen is None:
+        io_manager.display_message("Edit cancelled.")
+        return
+
+    parts = data_manager.list_parts(user["car_model"])
+    updated = io_manager.prompt_updated_service(chosen, parts)
+    # Business rule 1: the edited odometer must still fit the other services.
+    problem = logic_manager.check_service_odometer(
+        entries, updated["service_date"], updated["service_odometer"],
+        ignore_id=chosen.get("service_id"))
+    if problem is not None:
+        io_manager.display_message(f"  -> {problem}\nNothing was changed.")
+        return
+    if not data_manager.update_service(updated):
+        io_manager.display_message("Could not save your changes. Please try again.")
+        return
+    io_manager.display_message("\nService updated:")
+    io_manager.display_service(updated)
+
+
+def delete_service_flow(user: dict) -> None:
+    """Menu option 4: DELETE one service entry, after a y/n confirmation.
+    Earlier AI checks stay in prompt_records.json as a log."""
+    entries = logic_manager.sort_history(data_manager.history_for_plate(user["license_plate"]))
+    if not entries:
+        io_manager.display_message("\nYour history is empty, so there is nothing to delete.")
+        return
+    chosen = io_manager.prompt_service_choice(entries, "delete")
+    if chosen is None:
+        io_manager.display_message("Delete cancelled.")
+        return
+    io_manager.display_service(chosen)
+    if not io_manager.confirm_action("Delete this service from your history?"):
+        io_manager.display_message("Delete cancelled.")
+        return
+    if data_manager.delete_service(chosen.get("service_id")):
+        io_manager.display_message("Service deleted.")
+    else:
+        io_manager.display_message("Could not delete the service. Please try again.")
+
+
+# ======================================================================
+# URGENCY CHECKS (AI) and the urgent list
+# ======================================================================
+
 def check_part_flow(user: dict) -> None:
-    """Menu option 1: check one part of the logged-in user's car.
+    """Menu option 5: check one part, based on its latest service in the history.
     Saves and shows the result (or the earlier answer for repeated inputs)."""
     car_model = user["car_model"]
 
@@ -63,10 +197,25 @@ def check_part_flow(user: dict) -> None:
         io_manager.display_message(f"No stored service interval for {part_name}.")
         return
 
+    # The "last service" comes from the maintenance history, not from typing it again.
+    history = data_manager.history_for_plate(user["license_plate"])
+    last_service = logic_manager.latest_service(history, part_name)
+    if last_service is None:
+        io_manager.display_message(f"\nThere is no {part_name} service in your maintenance history yet.")
+        if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
+            return
+        new_entries = save_new_services(user, part_name)
+        if not new_entries:
+            return
+        last_service = new_entries[0]
+
+    io_manager.display_message(f"\nUsing your last {part_name} service from your history:")
+    io_manager.display_service(last_service)
+
     # Business rule 1: the new odometer reading can't go backwards. main.py looks up
     # the last reading because io_manager is not allowed to read the data files.
-    last_odometer = data_manager.get_last_odometer(data_manager.load(), user["license_plate"])
-    details = io_manager.prompt_service_details(last_odometer)
+    current_odometer = io_manager.prompt_current_odometer(
+        last_service["service_odometer"], last_odometer_on_file(user["license_plate"]))
 
     raw_record = {
         "license_plate": user["license_plate"],
@@ -75,12 +224,15 @@ def check_part_flow(user: dict) -> None:
         "coe_expiry_date": user["coe_expiry_date"],
         "part_name": part_name,
         "check_date": datetime.date.today().strftime("%d-%m-%Y"),   # stored as DD-MM-YYYY
+        "service_id": last_service.get("service_id"),
+        "last_service_date": last_service["service_date"],
+        "last_service_mileage": last_service["service_odometer"],
+        "current_odometer": current_odometer,
     }
-    raw_record.update(details)    # last service date and km, current odometer
     raw_record.update(interval)   # interval_km, interval_months
 
-    # Same plate, part, service date, service km and current km as before? Reuse
-    # the saved answer instead of calling the AI again (saves API calls, same result).
+    # Nothing new since a saved check (same plate, part, last service and current km)?
+    # Show the saved answer instead of calling the AI again (saves API calls).
     previous = data_manager.find_repeat(raw_record)
     if previous is not None:
         io_manager.display_repeated(previous)
@@ -96,32 +248,22 @@ def check_part_flow(user: dict) -> None:
     io_manager.display_result(final_record)
 
 
-def history_flow(user: dict) -> None:
-    """Menu option 2: list every saved check for this user's license plate.
-    Returns nothing; explains on screen if there are none yet."""
-    my_records = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
-    if not my_records:
-        # Explain why the list is empty so the screen doesn't look broken.
-        io_manager.display_message(f"\nNo checks saved for {user['license_plate']} yet. "
-                                   "Choose 1 to check a part -- it will appear here.")
-        return
-    io_manager.display_list(my_records)
-
-
 def urgent_flow(user: dict) -> None:
-    """Menu option 3: list this user's checks that need attention, highest risk first.
-    Returns nothing."""
+    """Menu option 6: list the parts that need attention, highest risk first.
+    Only each part's newest check counts, so a re-checked part drops off the list."""
+    my_checks = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
     # is_urgent(): outcome starts with URGENT, FLAGGED, DUE SOON, COE EXPIRED
     # or NEEDS MANUAL REVIEW.
-    urgent_records = data_manager.query(
-        lambda r: r.get("license_plate") == user["license_plate"] and logic_manager.is_urgent(r)
-    )
+    urgent_records = []
+    for record in logic_manager.latest_check_per_part(my_checks):
+        if logic_manager.is_urgent(record):
+            urgent_records.append(record)
     # Highest risk_score first; records without a score sort as 0.
     urgent_records.sort(key=lambda r: r.get("risk_score", 0), reverse=True)
     if not urgent_records:
-        io_manager.display_message("\nNothing needs attention right now: none of your checks are "
-                                   "urgent, flagged, overdue or waiting for manual review. "
-                                   "(Choose 2 to see all your checks.)")
+        io_manager.display_message("\nNothing needs attention right now: none of your parts' latest "
+                                   "checks are urgent, flagged, overdue or waiting for manual review. "
+                                   "(Choose 2 to see your history.)")
         return
     io_manager.display_list(urgent_records)
 
@@ -186,12 +328,14 @@ def update_profile_flow(user: dict) -> dict:
 
 
 def delete_profile_flow(user: dict) -> dict | None:
-    """DELETE the profile and all its saved checks, after a y/n confirmation.
-    Returns None if deleted (logs the user out), else the same user."""
+    """DELETE the profile, its maintenance history and its saved checks, after a y/n
+    confirmation. Returns None if deleted (logs the user out), else the same user."""
     plate = user["license_plate"]
-    record_count = len(data_manager.query(lambda r: r.get("license_plate") == plate))
+    service_count = len(data_manager.history_for_plate(plate))
+    check_count = len(data_manager.query(lambda r: r.get("license_plate") == plate))
 
-    question = f"Permanently delete {plate} and its {record_count} maintenance record(s)?"
+    question = (f"Permanently delete {plate}, its {service_count} service(s) and "
+                f"{check_count} urgency check(s)?")
     if not io_manager.confirm_action(question):
         io_manager.display_message("Delete cancelled.")
         return user
@@ -200,8 +344,9 @@ def delete_profile_flow(user: dict) -> dict | None:
     if not data_manager.delete_user(plate):
         io_manager.display_message("Could not delete the profile. Please try again.")
         return user
+    data_manager.delete_history_for_plate(plate)
     data_manager.delete_records_for_plate(plate)
-    io_manager.display_message("Profile and records deleted. You have been logged out.")
+    io_manager.display_message("Profile, history and checks deleted. You have been logged out.")
     return None
 
 
@@ -245,27 +390,36 @@ def main() -> None:
                     io_manager.display_message("Invalid choice. Please enter a number from the menu.")
             else:
                 # ---------- Logged-in menu ----------
-                # Options 1-4 pause so results aren't pushed off screen by the menu.
+                # Options 1-7 pause so results aren't pushed off screen by the menu.
                 if choice == "1":
-                    check_part_flow(current_user)
+                    add_service_flow(current_user)
                     io_manager.wait_for_enter()
                 elif choice == "2":
                     history_flow(current_user)
                     io_manager.wait_for_enter()
                 elif choice == "3":
-                    urgent_flow(current_user)
+                    edit_service_flow(current_user)
                     io_manager.wait_for_enter()
                 elif choice == "4":
-                    io_manager.display_user(current_user)
+                    delete_service_flow(current_user)
                     io_manager.wait_for_enter()
                 elif choice == "5":
-                    current_user = update_profile_flow(current_user)
+                    check_part_flow(current_user)
+                    io_manager.wait_for_enter()
                 elif choice == "6":
-                    current_user = delete_profile_flow(current_user)   # None = logged out
+                    urgent_flow(current_user)
+                    io_manager.wait_for_enter()
                 elif choice == "7":
+                    io_manager.display_user(current_user)
+                    io_manager.wait_for_enter()
+                elif choice == "8":
+                    current_user = update_profile_flow(current_user)
+                elif choice == "9":
+                    current_user = delete_profile_flow(current_user)   # None = logged out
+                elif choice == "10":
                     io_manager.display_message(f"Logged out {current_user['name']}.")
                     current_user = None
-                elif choice == "8":
+                elif choice == "11":
                     io_manager.display_message("Goodbye!")
                     break
                 else:

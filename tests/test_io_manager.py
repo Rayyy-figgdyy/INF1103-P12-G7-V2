@@ -31,3 +31,32 @@ def test_date_formatting():
     assert io_manager.show_date("09-10-2026") == "09-10-2026"
     assert io_manager.show_date(None) == "-"
     assert io_manager.show_date("not a date") == "not a date"
+
+def test_history_table_survives_damaged_entries():
+    io_manager.display_history([
+        {"part_name": "Coolant", "service_date": "not a date", "service_odometer": "abc"},
+        {"part_name": None, "latest_check": {"urgency_score": None, "outcome": None}},
+    ])  # must not raise
+
+
+def test_multi_choice_accepts_several_parts_and_reasks_on_bad_input():
+    import builtins
+    answers = iter(["9", "4,6", ])                  # 9 is out of range, so it asks again
+    saved_input = builtins.input
+    builtins.input = lambda prompt="": next(answers)
+    try:
+        parts = ["Brake Pads", "Coolant", "Engine Air Filter", "Engine Oil", "Spark Plugs", "Tyres"]
+        assert io_manager.prompt_multi_choice("Part numbers", parts) == ["Engine Oil", "Tyres"]
+    finally:
+        builtins.input = saved_input
+
+
+def test_multi_choice_counts_a_repeated_number_once():
+    import builtins
+    answers = iter(["4 4 1"])
+    saved_input = builtins.input
+    builtins.input = lambda prompt="": next(answers)
+    try:
+        assert io_manager.prompt_multi_choice("Part numbers", ["A", "B", "C", "D"]) == ["D", "A"]
+    finally:
+        builtins.input = saved_input

@@ -1,5 +1,5 @@
 """
-Tests for data_manager: user CRUD, maintenance records, the stored
+Tests for data_manager: user CRUD, maintenance history CRUD, prompt records, the stored
 manufacturer schedule, and missing/corrupt file handling. Every test
 uses a temporary folder, so real data in data/ is never touched.
 """
@@ -23,15 +23,18 @@ USER = {
 @contextlib.contextmanager
 def temp_data_files():
     """Point data_manager at empty temp files for the duration of a test."""
-    saved = (data_manager.DATA_FILE, data_manager.USERS_FILE, data_manager.CARS_FILE)
+    saved = (data_manager.PROMPTS_FILE, data_manager.HISTORY_FILE,
+             data_manager.USERS_FILE, data_manager.CARS_FILE)
     folder = tempfile.mkdtemp()
-    data_manager.DATA_FILE = os.path.join(folder, "maintenance_records.json")
+    data_manager.PROMPTS_FILE = os.path.join(folder, "prompt_records.json")
+    data_manager.HISTORY_FILE = os.path.join(folder, "maintenance_history.json")
     data_manager.USERS_FILE = os.path.join(folder, "users.json")
     data_manager.CARS_FILE = os.path.join(folder, "cars.json")
     try:
         yield folder
     finally:
-        data_manager.DATA_FILE, data_manager.USERS_FILE, data_manager.CARS_FILE = saved
+        (data_manager.PROMPTS_FILE, data_manager.HISTORY_FILE,
+         data_manager.USERS_FILE, data_manager.CARS_FILE) = saved
         shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -51,9 +54,11 @@ def test_missing_files_return_empty():
 
 def test_corrupt_files_return_empty_instead_of_crashing():
     with temp_data_files():
-        write(data_manager.DATA_FILE, "{this is not json")
+        write(data_manager.PROMPTS_FILE, "{this is not json")
+        write(data_manager.HISTORY_FILE, "[broken")
         write(data_manager.USERS_FILE, '{"not": "a list"}')
         assert data_manager.load() == []
+        assert data_manager.load_history() == []
         assert data_manager.load_users() == []
 
 
@@ -217,7 +222,7 @@ def test_identical_check_is_found_as_repeat():
 def test_any_changed_input_is_not_a_repeat():
     with temp_data_files():
         data_manager.save(CHECK)
-        for field, new_value in [("current_odometer", 49_500), ("part_name", "Battery"),
+        for field, new_value in [("current_odometer", 49_500), ("part_name", "Coolant"),
                                  ("last_service_date", "04-09-2025"), ("license_plate", "SGX88B"),
                                  ("last_service_mileage", 40_001)]:
             assert data_manager.find_repeat({**CHECK, field: new_value}) is None, field
@@ -226,3 +231,50 @@ def test_any_changed_input_is_not_a_repeat():
 def test_no_history_means_no_repeat():
     with temp_data_files():
         assert data_manager.find_repeat(CHECK) is None
+
+
+# --- Maintenance history CRUD --------------------------------------------------------
+
+SERVICE = {"license_plate": "SBA1234A", "part_name": "Engine Oil",
+           "service_date": "20-03-2026", "service_odometer": 58_000, "notes": "Ah Seng Motors"}
+
+
+def test_add_service_gives_each_entry_its_own_id():
+    with temp_data_files():
+        first = data_manager.add_service(SERVICE)
+        second = data_manager.add_service({**SERVICE, "part_name": "Coolant"})
+        assert first["service_id"] == 1 and second["service_id"] == 2
+        assert len(data_manager.history_for_plate("SBA1234A")) == 2
+        assert data_manager.history_for_plate("SGX88B") == []
+
+
+def test_update_service_replaces_the_entry():
+    with temp_data_files():
+        saved = data_manager.add_service(SERVICE)
+        assert data_manager.update_service({**saved, "service_odometer": 58_500}) is True
+        [entry] = data_manager.history_for_plate("SBA1234A")
+        assert entry["service_odometer"] == 58_500
+
+
+def test_update_or_delete_unknown_service_fails():
+    with temp_data_files():
+        data_manager.add_service(SERVICE)
+        assert data_manager.update_service({**SERVICE, "service_id": 99}) is False
+        assert data_manager.delete_service(99) is False
+
+
+def test_delete_service_and_delete_history_for_plate():
+    with temp_data_files():
+        first = data_manager.add_service(SERVICE)
+        data_manager.add_service({**SERVICE, "part_name": "Coolant"})
+        data_manager.add_service({**SERVICE, "license_plate": "SGX88B"})
+        assert data_manager.delete_service(first["service_id"]) is True
+        assert len(data_manager.history_for_plate("SBA1234A")) == 1
+        assert data_manager.delete_history_for_plate("SBA1234A") == 1
+        assert len(data_manager.load_history()) == 1        # the other car is untouched
+
+
+def test_last_odometer_counts_service_entries_too():
+    saved = [{"license_plate": "SBA1234A", "current_odometer": 60_000},
+             {"license_plate": "SBA1234A", "service_odometer": 61_000}]
+    assert data_manager.get_last_odometer(saved, "SBA1234A") == 61_000

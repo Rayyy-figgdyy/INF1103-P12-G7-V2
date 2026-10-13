@@ -1,8 +1,9 @@
 """
 data_manager.py -- the Data layer: saves and loads everything the app remembers.
 
-Three JSON files in data/:
-    maintenance_records.json   every finished maintenance check
+Four JSON files in data/:
+    maintenance_history.json   the services each owner has had done (their service log)
+    prompt_records.json        every AI urgency check, also used to spot repeated input
     users.json                 user profiles, one per license plate
     cars.json                  the 4 supported cars and their service schedules
 Pipeline: io -> ai -> logic -> data. Only main.py calls this file; no other manager
@@ -20,7 +21,8 @@ logger = logging.getLogger("data_manager")
 # it is started from (including inside Docker).
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
-DATA_FILE = os.path.join(DATA_DIR, "maintenance_records.json")
+HISTORY_FILE = os.path.join(DATA_DIR, "maintenance_history.json")
+PROMPTS_FILE = os.path.join(DATA_DIR, "prompt_records.json")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 CARS_FILE = os.path.join(DATA_DIR, "cars.json")
 
@@ -82,12 +84,97 @@ def write_list(path: str, items: list[dict]) -> bool:
 
 
 # ======================================================================
-# MAINTENANCE CHECKS: save, load and query (data/maintenance_records.json)
+# MAINTENANCE HISTORY: Create, Read, Update, Delete (data/maintenance_history.json)
+# One entry per service the owner has had done, e.g.
+#   {"service_id": 3, "license_plate": "SBA1234A", "part_name": "Engine Oil",
+#    "service_date": "20-03-2026", "service_odometer": 58000, "notes": "Ah Seng Motors"}
+# service_id is a number unique within the file, so an entry can be edited or deleted
+# even if two entries look the same.
+# ======================================================================
+
+def load_history() -> list[dict]:
+    """Return every service entry for every car, in saved order ([] if none yet)."""
+    return read_list(HISTORY_FILE)
+
+
+def history_for_plate(license_plate: str) -> list[dict]:
+    """Return the service entries for one car, in saved order."""
+    entries = []
+    for entry in load_history():
+        if entry.get("license_plate") == license_plate:
+            entries.append(entry)
+    return entries
+
+
+def next_service_id(entries: list[dict]) -> int:
+    """Return one more than the highest service_id in use (1 for an empty list)."""
+    highest = 0
+    for entry in entries:
+        service_id = entry.get("service_id")
+        if isinstance(service_id, int) and service_id > highest:
+            highest = service_id
+    return highest + 1
+
+
+def add_service(entry: dict) -> dict | None:
+    """CREATE: give the entry a new service_id and save it.
+    Returns the saved entry (with its id), or None if saving failed."""
+    entries = load_history()
+    new_entry = dict(entry)
+    new_entry["service_id"] = next_service_id(entries)
+    entries.append(new_entry)
+    if not write_list(HISTORY_FILE, entries):
+        return None
+    return new_entry
+
+
+def update_service(updated: dict) -> bool:
+    """UPDATE: replace the saved entry that has the same service_id.
+    Returns False if no entry has that id or saving failed."""
+    entries = load_history()
+    for position in range(len(entries)):
+        if entries[position].get("service_id") == updated.get("service_id"):
+            entries[position] = updated
+            return write_list(HISTORY_FILE, entries)
+    return False
+
+
+def delete_service(service_id: int) -> bool:
+    """DELETE: remove the entry with this service_id.
+    Returns False if no entry has that id or saving failed."""
+    entries = load_history()
+    remaining = []
+    for entry in entries:
+        if entry.get("service_id") != service_id:
+            remaining.append(entry)
+    if len(remaining) == len(entries):
+        return False                    # id not found
+    return write_list(HISTORY_FILE, remaining)
+
+
+def delete_history_for_plate(license_plate: str) -> int:
+    """Delete every service entry for one car. Returns how many were deleted.
+    main.py calls this when a profile is deleted."""
+    entries = load_history()
+    remaining = []
+    for entry in entries:
+        if entry.get("license_plate") != license_plate:
+            remaining.append(entry)
+    removed_count = len(entries) - len(remaining)
+    if removed_count > 0 and not write_list(HISTORY_FILE, remaining):
+        return 0                        # the write failed, so nothing was really deleted
+    return removed_count
+
+
+# ======================================================================
+# PROMPT RECORDS: every AI urgency check (data/prompt_records.json)
+# Kept so an identical check can be answered from here instead of calling the AI
+# again, and so the latest urgency for each service can be shown in the history.
 # ======================================================================
 
 def load() -> list[dict]:
-    """Return every saved maintenance check, oldest first ([] if none yet)."""
-    return read_list(DATA_FILE)
+    """Return every saved AI check, oldest first ([] if none yet)."""
+    return read_list(PROMPTS_FILE)
 
 
 def save(record: dict) -> bool:
@@ -95,7 +182,7 @@ def save(record: dict) -> bool:
     Returns True if it was saved."""
     records = load()
     records.append(record)
-    return write_list(DATA_FILE, records)
+    return write_list(PROMPTS_FILE, records)
 
 
 def query(filter_fn) -> list[dict]:
@@ -126,20 +213,24 @@ def find_repeat(record: dict) -> dict | None:
 
 def get_last_odometer(records: list[dict], license_plate: str) -> int | None:
     """Return the highest odometer reading saved for this car, or None if there is none.
-    Readings from every part count, since the odometer belongs to the whole car."""
+    Works on AI checks (current_odometer) and service entries (service_odometer), and
+    readings from every part count, since the odometer belongs to the whole car."""
     readings = []
     for record in records:
-        odometer = record.get("current_odometer")
-        # Skip readings that aren't whole numbers (e.g. hand-edited as "45000" text).
-        if record.get("license_plate") == license_plate and isinstance(odometer, int):
-            readings.append(odometer)
+        if record.get("license_plate") != license_plate:
+            continue
+        for field in ("current_odometer", "service_odometer"):
+            odometer = record.get(field)
+            # Skip readings that aren't whole numbers (e.g. hand-edited as "45000" text).
+            if isinstance(odometer, int) and not isinstance(odometer, bool):
+                readings.append(odometer)
     if readings:
         return max(readings)
     return None
 
 
 def delete_records_for_plate(license_plate: str) -> int:
-    """Delete every saved check for one car. Returns how many were deleted.
+    """Delete every saved AI check for one car. Returns how many were deleted.
     main.py calls this right after delete_user, so a deleted profile leaves no checks."""
     records = load()
     remaining = []
@@ -147,7 +238,7 @@ def delete_records_for_plate(license_plate: str) -> int:
         if record.get("license_plate") != license_plate:
             remaining.append(record)
     removed_count = len(records) - len(remaining)
-    if removed_count > 0 and not write_list(DATA_FILE, remaining):
+    if removed_count > 0 and not write_list(PROMPTS_FILE, remaining):
         return 0                        # the write failed, so nothing was really deleted
     return removed_count
 
@@ -182,7 +273,7 @@ def save_user(user: dict) -> bool:
 
 
 def delete_user(license_plate: str) -> bool:
-    """Delete the profile with this plate (its checks are removed separately).
+    """Delete the profile with this plate (its history and checks are removed separately).
     Returns False if no such profile exists or saving failed."""
     users = load_users()
     remaining = []

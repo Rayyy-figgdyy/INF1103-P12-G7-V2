@@ -1,5 +1,4 @@
 [
-
   {
     "license_plate": "SMZ2020K",
     "car_model": "Mazda 3 Hatchback 2020",
@@ -29,7 +28,8 @@
     "coe_days_left": 1342,
     "recommended_service_date": "12-10-2026",
     "risk_score": 95,
-    "outcome": "FLAGGED - High urgency but low AI confidence, verify with a mechanic"
+    "outcome": "FLAGGED - High urgency but low AI confidence, verify with a mechanic",
+    "service_id": 1
   },
   {
     "license_plate": "SMZ2020K",
@@ -39,28 +39,29 @@
     "part_name": "Brake Pads",
     "check_date": "12-10-2026",
     "last_service_date": "10-08-2024",
-    "last_service_mileage": 30000,
+    "last_service_mileage": 45000,
     "current_odometer": 69500,
     "interval_km": 40000,
     "interval_months": 24,
     "urgency_score": 9,
     "confidence": "High",
-    "overdue_summary": "Brake pads: 2 months overdue for inspection",
+    "overdue_summary": "Brake pads: 2 months past the 24-month interval",
     "recommended_action": "Have the brake pads inspected and replaced before further long drives.",
     "manual_reference": "Scheduled Maintenance - Brake lines, hoses, pads and discs",
     "ai_status": "ok",
     "ai_provider": "Gemini",
-    "km_since_service": 39500,
+    "km_since_service": 24500,
     "days_since_service": 793,
     "km_overdue": 0,
     "days_overdue": 62,
     "is_overdue": true,
     "is_safety_critical": true,
-    "km_per_day": 49.8,
+    "km_per_day": 30.9,
     "coe_days_left": 1342,
     "recommended_service_date": "12-10-2026",
     "risk_score": 100,
-    "outcome": "URGENT - Service immediately"
+    "outcome": "URGENT - Service immediately",
+    "service_id": 2
   },
   {
     "license_plate": "SMZ2020K",
@@ -91,7 +92,8 @@
     "coe_days_left": 1342,
     "recommended_service_date": "05-01-2028",
     "risk_score": 40,
-    "outcome": "MONITOR - Service approaching"
+    "outcome": "MONITOR - Service approaching",
+    "service_id": 3
   },
   {
     "license_plate": "SMZ2020K",
@@ -122,7 +124,8 @@
     "coe_days_left": 1342,
     "recommended_service_date": "24-04-2027",
     "risk_score": 30,
-    "outcome": "OK - Not urgent"
+    "outcome": "OK - Not urgent",
+    "service_id": 4
   },
   {
     "license_plate": "SMZ2020K",
@@ -153,7 +156,8 @@
     "coe_days_left": 1342,
     "recommended_service_date": "26-10-2026",
     "risk_score": 50,
-    "outcome": "MONITOR - Service approaching"
+    "outcome": "MONITOR - Service approaching",
+    "service_id": 5
   },
   {
     "license_plate": "SMZ2020K",
@@ -184,6 +188,7 @@
     "coe_days_left": 1342,
     "recommended_service_date": "12-10-2026",
     "risk_score": 75,
-    "outcome": "DUE SOON - Overdue by manufacturer schedule"
+    "outcome": "DUE SOON - Overdue by manufacturer schedule",
+    "service_id": 6
   }
 ]

@@ -7,6 +7,9 @@ Takes one maintenance check that the AI has already scored and applies our rules
   - route():    the final outcome text; includes the urgency + confidence rule
 Rules held here: overdue = whichever limit comes first, brake pads and tyres are
 safety-critical, the "service by" date (business rule 3) and the Singapore COE rules.
+It also holds the rules for the maintenance history: which service is the latest for
+a part, odometer readings that must go up over time (business rule 1), and which AI
+check is the latest one for each part.
 All arithmetic is done here, not by the AI. No screen, AI or file access.
 See explanations/logic_manager_explained.txt for a full walkthrough.
 """
@@ -250,3 +253,79 @@ def is_urgent(record: dict) -> bool:
     with one of URGENT_PREFIXES. main.py uses this for menu option 3."""
     outcome = str(record.get("outcome", ""))
     return outcome.startswith(URGENT_PREFIXES)
+
+
+# ======================================================================
+# MAINTENANCE HISTORY RULES
+# ======================================================================
+
+def service_sort_key(entry: dict) -> tuple:
+    """Sort key for a service entry: (date, odometer). Entries with a damaged date
+    sort first, so they are never picked as the latest service."""
+    date = to_date(entry.get("service_date")) or datetime.date.min
+    odometer = entry.get("service_odometer")
+    if not isinstance(odometer, int):
+        odometer = -1
+    return (date, odometer)
+
+
+def sort_history(entries: list[dict]) -> list[dict]:
+    """Return the service entries newest first (by date, then odometer)."""
+    return sorted(entries, key=service_sort_key, reverse=True)
+
+
+def latest_service(entries: list[dict], part_name: str) -> dict | None:
+    """Return the most recent service of this part, or None if it has never been
+    logged. This is the "last service" that an urgency check is based on."""
+    for entry in sort_history(entries):
+        if entry.get("part_name") == part_name and to_date(entry.get("service_date")):
+            return entry
+    return None
+
+
+def check_service_odometer(entries: list[dict], service_date: str, odometer: int,
+                           ignore_id: int | None = None) -> str | None:
+    """BUSINESS RULE 1 for the history: an odometer only goes up, so a service on a
+    later date can't show fewer km than one on an earlier date (any part counts, as
+    the odometer belongs to the whole car). ignore_id skips the entry being edited.
+    Returns a message explaining the clash, or None if the reading is consistent."""
+    new_date = to_date(service_date)
+    if new_date is None:
+        return "The service date is not a valid date."
+    for entry in entries:
+        if ignore_id is not None and entry.get("service_id") == ignore_id:
+            continue
+        other_date = to_date(entry.get("service_date"))
+        other_km = entry.get("service_odometer")
+        if other_date is None or not isinstance(other_km, int):
+            continue                    # damaged entry: can't compare, skip it
+        if other_date < new_date and other_km > odometer:
+            return (f"An earlier service ({entry.get('part_name')} on {entry.get('service_date')}) "
+                    f"was already at {other_km:,} km, so {odometer:,} km on {service_date} "
+                    "would mean the odometer went backwards.")
+        if other_date > new_date and other_km < odometer:
+            return (f"A later service ({entry.get('part_name')} on {entry.get('service_date')}) "
+                    f"was only at {other_km:,} km, so {odometer:,} km on {service_date} "
+                    "would mean the odometer went backwards.")
+    return None
+
+
+def latest_check_per_part(records: list[dict]) -> list[dict]:
+    """From a car's AI checks (oldest first), keep only the newest check for each part,
+    so an old result that has since been re-checked no longer counts as urgent."""
+    newest = {}
+    for record in records:              # later records overwrite earlier ones
+        newest[record.get("part_name")] = record
+    return list(newest.values())
+
+
+def latest_check_for_service(records: list[dict], entry: dict) -> dict | None:
+    """Return the newest AI check that was based on this service entry (same part,
+    service date and odometer), or None if that service hasn't been checked yet."""
+    found = None
+    for record in records:
+        if (record.get("part_name") == entry.get("part_name")
+                and record.get("last_service_date") == entry.get("service_date")
+                and record.get("last_service_mileage") == entry.get("service_odometer")):
+            found = record              # keep going: a later match is newer
+    return found

@@ -23,18 +23,23 @@ Tyres, Engine Air Filter and Coolant.
 
 1. Register with your name, licence plate, car and COE expiry date (or log in
    if you've used it before).
-2. Choose Check a part and pick one, for example Brake Pads.
-3. Type the date and odometer reading from your last service, plus today's
-   odometer reading. Dates are always DD-MM-YYYY.
+2. Add the services you've had done to your maintenance history (option 1):
+   the part, the date and the odometer reading from the workshop invoice.
+   You can view, edit and delete these entries too (options 2 to 4).
+   Dates are always DD-MM-YYYY.
+3. Choose Check a part (option 5) and pick one, for example Brake Pads. The
+   app takes your last Brake Pads service from your history, so you only type
+   today's odometer reading.
 4. The app sends this, together with your car's manual, to the AI. The AI
    gives an urgency score from 1 to 10 and says how confident it is.
 5. Our own rules then turn that into an outcome you can act on, such as
    URGENT or OK, along with a "service by" date and a risk score out of 100.
 
-Every check is saved, so you can come back later to look at your history or
-just the things that need attention. If you enter exactly the same check
-twice, the app won't ask the AI again. It just tells you
-"This is repeated information" and shows the earlier result.
+Your history shows each service with the latest urgency result next to it,
+and option 6 lists the parts whose latest check needs attention. If nothing
+has changed since a check (same service and same odometer reading), the app
+won't ask the AI again. It just tells you "This is repeated information" and
+shows the earlier result.
 
 
 ## Getting it running
@@ -156,8 +161,10 @@ that talks to more than one manager.
 5. C5, runs in Docker. See the `Dockerfile`. The tests run during the build.
 6. C6, Git history. Small commits, one feature per branch (see below).
 7. Rule 1, the odometer can't go backwards.
-   `io_manager.prompt_service_details` won't accept a reading lower than the
-   last service or the last reading on file.
+   `io_manager.prompt_current_odometer` won't accept a reading lower than the
+   last service or the last reading on file, and
+   `logic_manager.check_service_odometer` won't let a history entry show fewer
+   km than an earlier service.
 8. Rule 2, service intervals come from the manufacturer. `data/cars.json`
    holds each car's schedule, read by `data_manager.get_service_interval`.
 9. Rule 3, recommended service date. `logic_manager.evaluate` uses the AI's
@@ -181,10 +188,15 @@ cars.json has the 4 cars, their manuals, and how often each part needs
 servicing (km and months, whichever comes first). This one is in Git.
 
 users.json has everyone's profile: name, licence plate, car and COE
-expiry. The app creates it, so it isn't in Git.
+expiry. The app creates it.
 
-maintenance_records.json has every check: what was typed, what the AI
-said, and what our rules decided. The app creates it, so it isn't in Git.
+maintenance_history.json is each owner's service log: one entry per service
+(part, date, odometer and an optional note), each with its own service_id so
+it can be edited or deleted. The app creates it.
+
+prompt_records.json has every AI urgency check: what was sent, what the AI
+said, and what our rules decided. It is also how the app spots repeated input
+and skips the AI call. The app creates it.
 
 ### When things go wrong
 
