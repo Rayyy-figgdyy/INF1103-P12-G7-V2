@@ -208,3 +208,74 @@ def delete_profile_flow(user: dict) -> dict | None:
 # ======================================================================
 # THE MAIN LOOP: show the menu, do what the user picks, repeat
 # ======================================================================
+
+def hide_google_notices(record: logging.LogRecord) -> bool:
+    """Log filter: hide Google AI library warnings that clutter the screen.
+    Returns False (hide) only for google_genai messages below ERROR level."""
+    from_google = record.name.startswith("google_genai")
+    is_minor = record.levelno < logging.ERROR
+    return not (from_google and is_minor)
+
+
+def main() -> None:
+    """Run the app: set up logging, then show the menu and handle choices until Exit.
+    Returns nothing."""
+    # Only io_manager may print(), so the other managers report problems via logging.
+    logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(name)s: %(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(hide_google_notices)
+
+    # The logged-in profile is passed to each flow; no global variables.
+    current_user = None   # None = logged out
+
+    try:
+        while True:
+            choice = io_manager.prompt_main_menu(current_user)
+
+            if current_user is None:
+                # ---------- Logged-out menu ----------
+                if choice == "1":
+                    current_user = login_flow()
+                elif choice == "2":
+                    current_user = register_flow()
+                elif choice == "3":
+                    io_manager.display_message("Goodbye!")
+                    break
+                else:
+                    io_manager.display_message("Invalid choice. Please enter a number from the menu.")
+            else:
+                # ---------- Logged-in menu ----------
+                # Options 1-4 pause so results aren't pushed off screen by the menu.
+                if choice == "1":
+                    check_part_flow(current_user)
+                    io_manager.wait_for_enter()
+                elif choice == "2":
+                    history_flow(current_user)
+                    io_manager.wait_for_enter()
+                elif choice == "3":
+                    urgent_flow(current_user)
+                    io_manager.wait_for_enter()
+                elif choice == "4":
+                    io_manager.display_user(current_user)
+                    io_manager.wait_for_enter()
+                elif choice == "5":
+                    current_user = update_profile_flow(current_user)
+                elif choice == "6":
+                    current_user = delete_profile_flow(current_user)   # None = logged out
+                elif choice == "7":
+                    io_manager.display_message(f"Logged out {current_user['name']}.")
+                    current_user = None
+                elif choice == "8":
+                    io_manager.display_message("Goodbye!")
+                    break
+                else:
+                    io_manager.display_message("Invalid choice. Please enter a number from the menu.")
+
+    except (KeyboardInterrupt, EOFError):
+        # Ctrl+C, or no keyboard attached (e.g. Docker run without -it): exit politely.
+        io_manager.display_message("\nExiting. (If you're using Docker, run with: docker run -it ...)")
+
+
+# Start the app only when run directly, not when the tests import this file.
+if __name__ == "__main__":
+    main()
