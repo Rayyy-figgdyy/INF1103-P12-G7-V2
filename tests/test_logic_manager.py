@@ -270,3 +270,50 @@ def test_exact_duplicate_service_is_found():
     assert logic_manager.find_duplicate_service(history, "Engine Oil", "20-03-2026", 58_000) is not None
     assert logic_manager.find_duplicate_service(history, "Tyres", "20-03-2026", 58_000) is None
     assert logic_manager.find_duplicate_service(history, "Engine Oil", "20-03-2026", 58_000, ignore_id=1) is None
+
+
+def test_a_zero_limit_means_no_limit_of_that_kind():
+    # Spark plugs every 100,000 km with no time limit: 5 years later but few km = not overdue.
+    no_time = logic_manager.evaluate(sample_record(interval_km=100_000, interval_months=0,
+                                                   last_service_date="01-10-2021"))
+    assert no_time["is_overdue"] is False
+    # Honda oil: every 12 months, no km limit: a huge distance alone is not overdue...
+    no_km = logic_manager.evaluate(sample_record(interval_km=0, interval_months=12,
+                                                 current_odometer=90_000))
+    assert no_km["is_overdue"] is False
+    # ...but more than a year is.
+    assert logic_manager.evaluate(sample_record(interval_km=0, interval_months=12,
+                                                last_service_date="01-09-2025"))["is_overdue"] is True
+
+
+# --- Manual actions and 'first at X, then every Y' rules ---------------------------
+
+COOLANT_RULE = {"interval_km": 200_000, "interval_months": 120, "action": "replace",
+                "repeat_km": 40_000, "repeat_months": 24}
+
+
+def test_first_interval_until_the_part_has_been_replaced():
+    first = logic_manager.choose_interval(COOLANT_RULE, [])
+    assert (first["interval_km"], first["interval_months"], first["interval_stage"]) == (200_000, 120, "first")
+    repeat = logic_manager.choose_interval(COOLANT_RULE, [{"part_name": "Coolant"}])
+    assert (repeat["interval_km"], repeat["interval_months"], repeat["interval_stage"]) == (40_000, 24, "repeat")
+
+
+def test_single_interval_rule_has_no_stage():
+    rule = {"interval_km": 15_000, "interval_months": 12, "action": "inspect"}
+    chosen = logic_manager.choose_interval(rule, [{"part_name": "Brake Pads"}])
+    assert chosen == {"interval_km": 15_000, "interval_months": 12, "action": "inspect", "interval_stage": None}
+
+
+def test_from_new_starts_at_zero_km_on_1_january_of_the_model_year():
+    entry = logic_manager.from_new_service("Coolant", 2021)
+    assert (entry["service_date"], entry["service_odometer"]) == ("01-01-2021", 0)
+
+
+def test_overdue_safety_inspection_is_worded_as_an_inspection():
+    record = sample_record(part_name="Brake Pads", action="inspect", urgency_score=3,
+                           last_service_date="01-10-2025")
+    assert logic_manager.route(record) == "URGENT - Safety-critical inspection overdue"
+    record = sample_record(part_name="Tyres", action="rotate", urgency_score=3,
+                           last_service_date="01-10-2025")
+    assert logic_manager.route(record) == "URGENT - Safety-critical tyre rotation overdue"

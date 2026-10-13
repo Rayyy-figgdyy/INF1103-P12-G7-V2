@@ -28,6 +28,10 @@ CARS_FILE = os.path.join(DATA_DIR, "cars.json")
 
 VALID_CONDITIONS = ("Brand New", "Used")
 
+# What a manual can tell you to do with a part. "replace" is the default when a
+# schedule entry has no "action".
+VALID_ACTIONS = ("replace", "inspect", "rotate")
+
 # A new check is a "repeat" when ALL five inputs match a saved check. main.py then shows
 # the saved answer instead of calling the AI again: same inputs give the same result,
 # with no extra API usage. check_date is not compared, so a repeat on another day counts.
@@ -292,12 +296,29 @@ def delete_user(license_plate: str) -> bool:
 # cars.json can't crash the app.
 # ======================================================================
 
+def is_valid_limit_pair(km, months) -> bool:
+    """Return True if km and months are whole numbers, 0 or more, and at least one is
+    above 0. A 0 means the manual gives no limit of that kind."""
+    for value in (km, months):
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+    return km > 0 or months > 0
+
+
 def is_valid_interval(entry) -> bool:
-    """Return True if a schedule line looks like {"km": 10000, "months": 12},
-    with both values whole numbers above zero."""
-    return (isinstance(entry, dict)
-            and isinstance(entry.get("km"), int) and entry["km"] > 0
-            and isinstance(entry.get("months"), int) and entry["months"] > 0)
+    """Return True if a schedule line looks like
+    {"action": "replace", "km": 10000, "months": 12}, optionally with
+    "repeat_km"/"repeat_months" (for 'first at X, then every Y') and a "note".
+    action may be left out (it then means "replace")."""
+    if not isinstance(entry, dict):
+        return False
+    if not is_valid_limit_pair(entry.get("km"), entry.get("months")):
+        return False
+    if entry.get("action", "replace") not in VALID_ACTIONS:
+        return False
+    if "repeat_km" in entry or "repeat_months" in entry:
+        return is_valid_limit_pair(entry.get("repeat_km"), entry.get("repeat_months"))
+    return True
 
 
 def is_valid_car(car) -> bool:
@@ -364,13 +385,20 @@ def list_parts(car_model: str) -> list[str]:
 
 
 def get_service_interval(car_model: str, part_name: str) -> dict | None:
-    """Return e.g. {"interval_km": 10000, "interval_months": 12} for this car and part,
-    or None if either is unknown."""
+    """Return the stored rule for this car and part, e.g.
+    {"interval_km": 10000, "interval_months": 12, "action": "replace"}, plus
+    "repeat_km"/"repeat_months" when the manual says 'first at X, then every Y'.
+    Returns None if the car or part is unknown."""
     car = find_car(car_model)
     if car is None or part_name not in car["schedule"]:
         return None
     interval = car["schedule"][part_name]
-    return {"interval_km": interval["km"], "interval_months": interval["months"]}
+    rule = {"interval_km": interval["km"], "interval_months": interval["months"],
+            "action": interval.get("action", "replace")}
+    if "repeat_km" in interval:
+        rule["repeat_km"] = interval["repeat_km"]
+        rule["repeat_months"] = interval["repeat_months"]
+    return rule
 
 
 def get_model_year(car_model: str) -> int | None:

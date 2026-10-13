@@ -33,6 +33,9 @@ MAX_KM_PER_DAY = 2_000
 # A Singapore COE lasts 10 years, so a COE can't expire more than 10 years from today.
 COE_MAX_YEARS = 10
 
+# What each stored action is called in the outcome text of rule 5 below.
+OVERDUE_WORDING = {"replace": "part", "inspect": "inspection", "rotate": "tyre rotation"}
+
 # Outcomes that need the owner's attention: any outcome starting with one of these
 # is listed in menu option 3.
 URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED", "NEEDS MANUAL REVIEW")
@@ -237,8 +240,11 @@ def route(record: dict) -> str:
 
     # Rule 5. Safety net: overdue brake pads or tyres are ALWAYS urgent, even if the
     # AI's urgency is low.
+    # The wording follows the manual's action, so an overdue brake INSPECTION isn't
+    # reported as if the pads themselves must be replaced.
     if facts["is_safety_critical"] and facts["is_overdue"]:
-        return "URGENT - Safety-critical part overdue"
+        what = OVERDUE_WORDING.get(record.get("action"), "part")
+        return f"URGENT - Safety-critical {what} overdue"
 
     # Rule 6. COE defer rule: COE ends within 180 days AND not a safety part AND
     # urgency 4 or less -> the service can wait (the car may soon be off the road).
@@ -438,3 +444,36 @@ def find_duplicate_service(entries: list[dict], part_name: str, service_date: st
                 and entry.get("service_odometer") == odometer):
             return entry
     return None
+
+
+
+# ======================================================================
+# WHICH INTERVAL APPLIES ("first at X, then every Y")
+# ======================================================================
+
+def choose_interval(rule: dict, part_services: list[dict]) -> dict:
+    """Pick the interval that applies to the next service of a part. When the manual
+    says 'first at X, then every Y' (rule has repeat_km/repeat_months) and this part
+    has already been replaced at least once (part_services is not empty), the repeat
+    interval Y applies; otherwise the first interval X does.
+    Returns {"interval_km", "interval_months", "action", "interval_stage"}, where
+    interval_stage is "first", "repeat" or None (the manual has only one interval)."""
+    chosen = {"interval_km": rule["interval_km"], "interval_months": rule["interval_months"],
+              "action": rule.get("action", "replace"), "interval_stage": None}
+    if "repeat_km" in rule:
+        if part_services:
+            chosen["interval_km"] = rule["repeat_km"]
+            chosen["interval_months"] = rule["repeat_months"]
+            chosen["interval_stage"] = "repeat"
+        else:
+            chosen["interval_stage"] = "first"
+    return chosen
+
+
+def from_new_service(part_name: str, model_year: int) -> dict:
+    """A stand-in "last service" for a part that has never been replaced: the car as
+    new, at 0 km on 1 January of its model year (the earliest date it can have been
+    made). Used for first-change checks such as coolant. It is not saved."""
+    return {"service_id": None, "part_name": part_name,
+            "service_date": f"01-01-{model_year}", "service_odometer": 0,
+            "notes": "from new (never replaced)"}

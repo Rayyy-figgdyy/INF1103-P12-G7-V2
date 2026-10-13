@@ -151,7 +151,7 @@ def test_each_car_has_its_own_parts_and_intervals():
         assert data_manager.list_parts("Honda Civic 2025") == ["Brake Pads", "Engine Oil"]
         assert data_manager.list_parts("Kia Forte") == ["Engine Oil"]
         assert data_manager.get_service_interval("Kia Forte", "Engine Oil") == \
-            {"interval_km": 8000, "interval_months": 6}
+            {"interval_km": 8000, "interval_months": 6, "action": "replace"}
         assert data_manager.get_service_interval("Kia Forte", "Brake Pads") is None
 
 
@@ -294,3 +294,30 @@ def test_model_year_from_cars_json_or_model_name():
         assert data_manager.get_model_year("Kia Forte") == 2024              # from "year"
         assert data_manager.get_model_year("Mazda 3 Hatchback 2020") == 2020  # from the name
         assert data_manager.get_model_year("Unknown Car") is None
+
+
+def test_interval_may_have_no_km_or_no_time_limit_but_not_neither():
+    assert data_manager.is_valid_interval({"km": 100000, "months": 0}) is True   # spark plugs
+    assert data_manager.is_valid_interval({"km": 0, "months": 12}) is True       # Honda oil
+    assert data_manager.is_valid_interval({"km": 0, "months": 0}) is False
+    assert data_manager.is_valid_interval({"km": -5, "months": 12}) is False
+    assert data_manager.is_valid_interval({"km": True, "months": 12}) is False
+
+
+def test_schedule_entries_with_action_and_first_then_repeat_rule():
+    assert data_manager.is_valid_interval({"action": "inspect", "km": 15000, "months": 12}) is True
+    assert data_manager.is_valid_interval({"action": "polish", "km": 15000, "months": 12}) is False
+    coolant = {"action": "replace", "km": 200000, "months": 120, "repeat_km": 40000, "repeat_months": 24}
+    assert data_manager.is_valid_interval(coolant) is True
+    assert data_manager.is_valid_interval({**coolant, "repeat_months": "two years"}) is False
+
+
+def test_real_cars_json_is_valid_and_complete():
+    # Every car in the real data/cars.json loads with all 6 parts and a valid action.
+    for model in data_manager.list_car_models():
+        parts = data_manager.list_parts(model)
+        assert parts == ["Brake Pads", "Coolant", "Engine Air Filter", "Engine Oil", "Spark Plugs", "Tyres"], model
+        assert data_manager.get_service_interval(model, "Coolant")["repeat_km"] > 0, model
+        assert data_manager.get_service_interval(model, "Brake Pads")["action"] == "inspect", model
+        assert data_manager.get_service_interval(model, "Tyres")["action"] == "rotate", model
+    assert len(data_manager.list_car_models()) == 4

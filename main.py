@@ -237,17 +237,35 @@ def check_part_flow(user: dict) -> None:
     # The "last service" comes from the maintenance history, not from typing it again.
     history = data_manager.history_for_plate(user["license_plate"])
     last_service = logic_manager.latest_service(history, part_name)
+    from_new = False
     if last_service is None:
         io_manager.display_message(f"\nThere is no {part_name} service in your maintenance history yet.")
-        if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
-            return
-        new_entries = save_new_services(user, part_name)
-        if not new_entries:
-            return
-        last_service = new_entries[0]
+        model_year = data_manager.get_model_year(car_model)
+        # A part with a 'first at X, then every Y' rule (e.g. coolant) may never have
+        # been replaced; then the first interval is counted from the car being new.
+        if ("repeat_km" in interval and model_year is not None
+                and not io_manager.confirm_action(f"Has the {part_name} ever been replaced?")):
+            last_service = logic_manager.from_new_service(part_name, model_year)
+            from_new = True
+        else:
+            if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
+                return
+            new_entries = save_new_services(user, part_name)
+            if not new_entries:
+                return
+            last_service = new_entries[0]
+            history = data_manager.history_for_plate(user["license_plate"])
 
-    io_manager.display_message(f"\nUsing your last {part_name} service from your history:")
+    if from_new:
+        io_manager.display_message(f"\nChecking your {part_name} from new "
+                                   "(the manual's first-change interval applies):")
+    else:
+        io_manager.display_message(f"\nUsing your last {part_name} service from your history:")
     io_manager.display_service(last_service)
+
+    # 'First at X, then every Y': once this part has been replaced, Y applies.
+    part_services = [e for e in history if e.get("part_name") == part_name]
+    chosen_interval = logic_manager.choose_interval(interval, part_services)
 
     # Business rule 1: the new odometer reading can't go backwards. main.py looks up
     # the last reading because io_manager is not allowed to read the data files.
@@ -275,7 +293,7 @@ def check_part_flow(user: dict) -> None:
         "last_service_mileage": last_service["service_odometer"],
         "current_odometer": current_odometer,
     }
-    raw_record.update(interval)   # interval_km, interval_months
+    raw_record.update(chosen_interval)   # interval_km, interval_months, action, interval_stage
 
     # Nothing new since a saved check (same plate, part, last service and current km)?
     # Show the saved answer instead of calling the AI again (saves API calls).

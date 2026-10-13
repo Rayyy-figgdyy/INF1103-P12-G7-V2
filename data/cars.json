@@ -1,18 +1,19 @@
 {
-  "_note": "The 4 cars in our test environment. 'schedule' = how often each part needs servicing (km and months, whichever comes first). 'Tyres' means the tyre ROTATION interval. 'year' is the model year: no service can be dated before 1 January of that year. 'manual' is the PDF the AI reads.",
+  "_note": "The 4 cars in our test environment. Each 'schedule' entry is taken from that car's owner's manual (normal driving conditions): 'action' is what the manual says to do (replace, inspect or rotate), and 'km'/'months' is the interval, whichever comes first (0 = the manual gives no limit of that kind). Where the manual says 'first at X, then every Y', km/months is the first change and repeat_km/repeat_months the interval after that. 'note' quotes the manual where it helps. 'year' is the model year: no service can be dated before 1 January of that year. 'manual' is the PDF the AI reads; 'schedule_source' says which schedule and pages the numbers come from.",
   "cars": [
     {
       "model": "Honda Civic 2025",
       "condition": "Brand New",
       "year": 2025,
       "manual": "manuals/honda_civic_2025.pdf",
+      "schedule_source": "Owner's manual, Maintenance Schedule, except South African models (pp. 647-648), normal conditions; the manual also has notes for Singaporean models.",
       "schedule": {
-        "Engine Oil":        {"km": 10000,  "months": 12},
-        "Brake Pads":        {"km": 40000,  "months": 24},
-        "Spark Plugs":       {"km": 100000, "months": 72},
-        "Tyres":             {"km": 10000,  "months": 12},
-        "Engine Air Filter": {"km": 30000,  "months": 24},
-        "Coolant":           {"km": 100000, "months": 60}
+        "Engine Oil":        {"action": "replace", "km": 10000, "months": 12, "note": "Manual: replace 'when indicator comes on or 1 year' (no km figure); the 10,000 km limit was added by our team"},
+        "Brake Pads":        {"action": "inspect", "km": 10000, "months": 12, "note": "Manual: inspect front and rear brakes every 10,000 km or 1 year"},
+        "Spark Plugs":       {"action": "replace", "km": 100000, "months": 0, "note": "Except E85 models"},
+        "Tyres":             {"action": "rotate", "km": 10000, "months": 0},
+        "Engine Air Filter": {"action": "replace", "km": 30000, "months": 0, "note": "Air cleaner element"},
+        "Coolant":           {"action": "replace", "km": 200000, "months": 120, "repeat_km": 100000, "repeat_months": 60, "note": "First at 200,000 km or 10 years, then every 100,000 km or 5 years"}
       }
     },
     {
@@ -20,13 +21,14 @@
       "condition": "Used",
       "year": 2020,
       "manual": "manuals/mazda_3_hatchback_2020.pdf",
+      "schedule_source": "Owner's manual, Scheduled Maintenance, U.S.A. and Puerto Rico, normal driving (pp. 6-4 to 6-5): each interval = 16,000 km or 12 months.",
       "schedule": {
-        "Engine Oil":        {"km": 10000,  "months": 12},
-        "Brake Pads":        {"km": 40000,  "months": 24},
-        "Spark Plugs":       {"km": 75000,  "months": 60},
-        "Tyres":             {"km": 16000,  "months": 12},
-        "Engine Air Filter": {"km": 56000,  "months": 36},
-        "Coolant":           {"km": 100000, "months": 60}
+        "Engine Oil":        {"action": "replace", "km": 16000, "months": 12, "note": "When the wrench indicator comes on, at most 16,000 km or 12 months; severe driving: 8,000 km or 6 months"},
+        "Brake Pads":        {"action": "inspect", "km": 16000, "months": 12, "note": "Manual: inspect disc brakes at every interval"},
+        "Spark Plugs":       {"action": "replace", "km": 120000, "months": 0},
+        "Tyres":             {"action": "rotate", "km": 16000, "months": 0},
+        "Engine Air Filter": {"action": "replace", "km": 48000, "months": 36, "note": "Replaced at the 3rd and 6th intervals"},
+        "Coolant":           {"action": "replace", "km": 192000, "months": 120, "repeat_km": 96000, "repeat_months": 60, "note": "First at 192,000 km or 120 months, then every 96,000 km or 60 months"}
       }
     },
     {
@@ -34,13 +36,14 @@
       "condition": "Used",
       "year": 2021,
       "manual": "manuals/hyundai_elantra_2021.pdf",
+      "schedule_source": "Owner's manual, Normal Maintenance Schedule - Gasoline Engine (Except Europe), except Middle East (pp. 9-14 to 9-17); Tire rotation (p. 9-41). Spark plugs: 2.0 MPI / Smartstream G1.6, unleaded fuel.",
       "schedule": {
-        "Engine Oil":        {"km": 10000,  "months": 12},
-        "Brake Pads":        {"km": 40000,  "months": 24},
-        "Spark Plugs":       {"km": 100000, "months": 72},
-        "Tyres":             {"km": 12000,  "months": 12},
-        "Engine Air Filter": {"km": 30000,  "months": 24},
-        "Coolant":           {"km": 100000, "months": 60}
+        "Engine Oil":        {"action": "replace", "km": 15000, "months": 12},
+        "Brake Pads":        {"action": "inspect", "km": 15000, "months": 12, "note": "Manual: inspect disc brakes and pads"},
+        "Spark Plugs":       {"action": "replace", "km": 160000, "months": 0},
+        "Tyres":             {"action": "rotate", "km": 12000, "months": 0, "note": "Or sooner if irregular wear develops"},
+        "Engine Air Filter": {"action": "replace", "km": 45000, "months": 36, "note": "Also inspect every 15,000 km or 12 months"},
+        "Coolant":           {"action": "replace", "km": 200000, "months": 120, "repeat_km": 40000, "repeat_months": 24, "note": "First at 200,000 km or 10 years, then every 40,000 km or 24 months"}
       }
     },
     {
@@ -48,13 +51,14 @@
       "condition": "Used",
       "year": 2024,
       "manual": "manuals/kia_forte.pdf",
+      "schedule_source": "Owner's manual (USA edition), Normal maintenance schedule - Non Turbo Models, 2.0 MPI (p. 8-12).",
       "schedule": {
-        "Engine Oil":        {"km": 10000,  "months": 12},
-        "Brake Pads":        {"km": 40000,  "months": 24},
-        "Spark Plugs":       {"km": 100000, "months": 72},
-        "Tyres":             {"km": 13000,  "months": 12},
-        "Engine Air Filter": {"km": 39000,  "months": 36},
-        "Coolant":           {"km": 100000, "months": 60}
+        "Engine Oil":        {"action": "replace", "km": 13000, "months": 12},
+        "Brake Pads":        {"action": "inspect", "km": 13000, "months": 12, "note": "Manual: inspect brake discs and pads"},
+        "Spark Plugs":       {"action": "replace", "km": 156000, "months": 0},
+        "Tyres":             {"action": "rotate", "km": 13000, "months": 12},
+        "Engine Air Filter": {"action": "replace", "km": 39000, "months": 36, "note": "Also inspect every 13,000 km or 12 months"},
+        "Coolant":           {"action": "replace", "km": 195000, "months": 120, "repeat_km": 39000, "repeat_months": 24, "note": "First at 195,000 km or 120 months, then every 39,000 km or 24 months"}
       }
     }
   ]

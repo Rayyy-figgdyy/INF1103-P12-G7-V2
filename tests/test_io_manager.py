@@ -76,3 +76,17 @@ def test_coe_must_be_between_model_year_and_ten_years_ahead():
     assert io_manager.coe_problem(datetime.date(2015, 1, 1), earliest, latest) is not None
     assert io_manager.coe_problem(datetime.date(2099, 1, 1), earliest, latest) is not None
     assert io_manager.coe_problem(datetime.date(2025, 1, 1), earliest, latest) is None  # expired is allowed
+
+
+def test_schedule_text_leaves_out_a_missing_limit():
+    assert io_manager.schedule_text({"interval_km": 10000, "interval_months": 12}) == "every 10,000 km or 12 months"
+    assert io_manager.schedule_text({"interval_km": 100000, "interval_months": 0}) == "every 100,000 km (no time limit)"
+    assert io_manager.schedule_text({"interval_km": 0, "interval_months": 12}) == "every 12 months (no km limit)"
+
+
+def test_schedule_text_shows_the_manual_action_and_stage():
+    assert io_manager.schedule_text({"interval_km": 16000, "interval_months": 12, "action": "inspect"}) \
+        == "inspect every 16,000 km or 12 months"
+    assert io_manager.schedule_text({"interval_km": 40000, "interval_months": 24, "action": "replace",
+                                     "interval_stage": "repeat"}) \
+        == "replace every 40,000 km or 24 months (after the first change)"

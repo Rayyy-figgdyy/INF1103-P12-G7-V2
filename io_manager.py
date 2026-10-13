@@ -457,6 +457,26 @@ def display_message(message: str) -> None:
     print(message)
 
 
+# How the stage of a 'first at X, then every Y' rule is shown on screen.
+STAGE_TEXT = {"first": " (first change)", "repeat": " (after the first change)"}
+
+
+def schedule_text(record: dict) -> str:
+    """Describe the stored interval, e.g. 'inspect every 16,000 km or 12 months',
+    leaving out a limit of 0 (the manual gives none), e.g. 'replace every 100,000 km
+    (no time limit)'. Older records without an action just say 'every ...'."""
+    interval_km, months = record.get("interval_km"), record.get("interval_months")
+    if not interval_km and months:
+        text = f"every {months} months (no km limit)"
+    elif interval_km and not months:
+        text = f"every {km(interval_km)} km (no time limit)"
+    else:
+        text = f"every {km(interval_km)} km or {months} months"
+    if record.get("action"):
+        text = f"{record['action']} {text}"
+    return text + STAGE_TEXT.get(record.get("interval_stage"), "")
+
+
 def display_record(record: dict) -> None:
     """Print one maintenance check in full, one detail per line."""
     urgency = record.get("urgency_score")
@@ -469,7 +489,7 @@ def display_record(record: dict) -> None:
     print(f"Part:               {record.get('part_name')}  ({record.get('car_model')}, {record.get('license_plate')})")
     print(f"Checked on:         {show_date(record.get('check_date'))} at {km(record.get('current_odometer'))} km")
     print(f"Last serviced:      {show_date(record.get('last_service_date'))} at {km(record.get('last_service_mileage'))} km")
-    print(f"Schedule:           every {km(record.get('interval_km'))} km or {record.get('interval_months')} months")
+    print(f"Schedule:           {schedule_text(record)}")
     print(f"Since last service: {km(record.get('km_since_service'))} km / {record.get('days_since_service')} days")
     if record.get("is_overdue"):        # only shown for overdue parts
         print(f"Overdue by:         {km(record.get('km_overdue'))} km / {record.get('days_overdue')} days")
