@@ -197,3 +197,56 @@ def score(record: dict) -> int:
 # route -- the final decision
 # ======================================================================
 
+def route(record: dict) -> str:
+    """Decide the final outcome for one check and return it as text,
+    e.g. "URGENT - Service immediately"."""
+    # The rules are checked top to bottom and the FIRST match wins (each `return`
+    # ends the function), so the most serious rules must come first.
+    urgency = record.get("urgency_score")
+    confidence = record.get("confidence")
+
+    # Rule 1. No valid AI answer: none of the AI-based rules below can be trusted.
+    if record.get("ai_status") != "ok" or urgency is None:
+        return "NEEDS MANUAL REVIEW - AI assessment unavailable"
+
+    facts = evaluate(record)
+    coe_days_left = facts["coe_days_left"]
+
+    # Rule 2. Singapore: an expired COE means the car can't legally be driven,
+    # so servicing advice is pointless until the COE is renewed.
+    if coe_days_left is not None and coe_days_left < 0:
+        return "COE EXPIRED - Renew the COE or deregister before servicing"
+
+    # Rules 3 and 4. MULTI-CONDITION RULE (required by the brief): combines the AI's
+    # urgency AND its confidence. A high score is only acted on directly when the
+    # AI is sure; otherwise a mechanic should confirm it.
+    if urgency >= 8 and confidence == "High":
+        return "URGENT - Service immediately"
+    if urgency >= 8:
+        return "FLAGGED - High urgency but low AI confidence, verify with a mechanic"
+
+    # Rule 5. Safety net: overdue brake pads or tyres are ALWAYS urgent, even if the
+    # AI's urgency is low.
+    if facts["is_safety_critical"] and facts["is_overdue"]:
+        return "URGENT - Safety-critical part overdue"
+
+    # Rule 6. COE defer rule: COE ends within 180 days AND not a safety part AND
+    # urgency 4 or less -> the service can wait (the car may soon be off the road).
+    coe_ends_soon = coe_days_left is not None and coe_days_left <= COE_DEFER_WINDOW_DAYS
+    if coe_ends_soon and not facts["is_safety_critical"] and urgency <= 4:
+        return "DEFER - COE expires soon, non-critical service can wait"
+
+    # Rules 7 to 9. Everything else: overdue -> DUE SOON, urgency 1-3 -> OK,
+    # urgency 4-7 -> MONITOR.
+    if facts["is_overdue"]:
+        return "DUE SOON - Overdue by manufacturer schedule"
+    if urgency <= 3:
+        return "OK - Not urgent"
+    return "MONITOR - Service approaching"
+
+
+def is_urgent(record: dict) -> bool:
+    """Return True if the saved outcome needs the owner's attention, i.e. it starts
+    with one of URGENT_PREFIXES. main.py uses this for menu option 3."""
+    outcome = str(record.get("outcome", ""))
+    return outcome.startswith(URGENT_PREFIXES)
