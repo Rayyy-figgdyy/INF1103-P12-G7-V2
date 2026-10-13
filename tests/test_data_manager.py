@@ -278,3 +278,19 @@ def test_last_odometer_counts_service_entries_too():
     saved = [{"license_plate": "SBA1234A", "current_odometer": 60_000},
              {"license_plate": "SBA1234A", "service_odometer": 61_000}]
     assert data_manager.get_last_odometer(saved, "SBA1234A") == 61_000
+
+
+# --- Model year (earliest allowed service date) ----------------------------------------
+
+def test_model_year_from_cars_json_or_model_name():
+    with temp_data_files():
+        cars = {"cars": [
+            {"model": "Kia Forte", "condition": "Used", "year": 2024, "manual": "m.pdf",
+             "schedule": {"Engine Oil": {"km": 10000, "months": 12}}},
+            {"model": "Mazda 3 Hatchback 2020", "condition": "Used", "manual": "m.pdf",
+             "schedule": {"Engine Oil": {"km": 10000, "months": 12}}},
+        ]}
+        write(data_manager.CARS_FILE, json.dumps(cars))
+        assert data_manager.get_model_year("Kia Forte") == 2024              # from "year"
+        assert data_manager.get_model_year("Mazda 3 Hatchback 2020") == 2020  # from the name
+        assert data_manager.get_model_year("Unknown Car") is None

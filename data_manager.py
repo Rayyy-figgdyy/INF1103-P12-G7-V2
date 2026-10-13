@@ -373,6 +373,18 @@ def get_service_interval(car_model: str, part_name: str) -> dict | None:
     return {"interval_km": interval["km"], "interval_months": interval["months"]}
 
 
+def get_model_year(car_model: str) -> int | None:
+    """Return the car's model year, e.g. 2020: the "year" in cars.json, or else a
+    4-digit year at the end of the model name. None if neither is there."""
+    car = find_car(car_model)
+    if car is not None and isinstance(car.get("year"), int):
+        return car["year"]
+    last_word = car_model.split()[-1] if car_model.split() else ""
+    if last_word.isdigit() and len(last_word) == 4:
+        return int(last_word)
+    return None
+
+
 def get_manual_path(car_model: str) -> str | None:
     """Return the full path to this car's manual PDF, or None if the car is unknown
     or the file isn't there (a missing file is logged)."""

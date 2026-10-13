@@ -1,9 +1,10 @@
 {
-  "_note": "The 4 cars in our test environment. 'schedule' = how often each part needs servicing (km and months, whichever comes first). 'Tyres' means the tyre ROTATION interval. 'manual' is the PDF the AI reads.",
+  "_note": "The 4 cars in our test environment. 'schedule' = how often each part needs servicing (km and months, whichever comes first). 'Tyres' means the tyre ROTATION interval. 'year' is the model year: no service can be dated before 1 January of that year. 'manual' is the PDF the AI reads.",
   "cars": [
     {
       "model": "Honda Civic 2025",
       "condition": "Brand New",
+      "year": 2025,
       "manual": "manuals/honda_civic_2025.pdf",
       "schedule": {
         "Engine Oil":        {"km": 10000,  "months": 12},
@@ -17,6 +18,7 @@
     {
       "model": "Mazda 3 Hatchback 2020",
       "condition": "Used",
+      "year": 2020,
       "manual": "manuals/mazda_3_hatchback_2020.pdf",
       "schedule": {
         "Engine Oil":        {"km": 10000,  "months": 12},
@@ -30,6 +32,7 @@
     {
       "model": "Hyundai Elantra 2021",
       "condition": "Used",
+      "year": 2021,
       "manual": "manuals/hyundai_elantra_2021.pdf",
       "schedule": {
         "Engine Oil":        {"km": 10000,  "months": 12},
@@ -43,6 +46,7 @@
     {
       "model": "Kia Forte",
       "condition": "Used",
+      "year": 2024,
       "manual": "manuals/kia_forte.pdf",
       "schedule": {
         "Engine Oil":        {"km": 10000,  "months": 12},

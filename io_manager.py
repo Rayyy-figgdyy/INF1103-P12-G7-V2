@@ -128,15 +128,28 @@ def prompt_km(label: str) -> int:
             return int(typed)
 
 
-def prompt_past_date(label: str) -> str:
-    """Ask for a real date that is today or earlier (e.g. last service date).
-    Returns it in the saved format, 'DD-MM-YYYY'."""
+def date_problem(date: datetime.date, earliest: datetime.date | None) -> str | None:
+    """Check a service date is not in the future and not before `earliest` (the start
+    of the car's model year). Returns what's wrong, or None if the date is fine."""
+    if date > datetime.date.today():
+        return "cannot be in the future"
+    if earliest is not None and date < earliest:
+        return (f"cannot be before {earliest.strftime(DATE_FORMAT)}, "
+                f"because your car is a {earliest.year} model")
+    return None
+
+
+def prompt_past_date(label: str, earliest: datetime.date | None = None) -> str:
+    """Ask for a real date that is today or earlier (e.g. a service date), and not
+    before `earliest` if given. Returns it in the saved format, 'DD-MM-YYYY'."""
     while True:
         date = parse_date(input(f"{label} ({DATE_HINT}): ").strip())
         if date is None:
             print(f"  -> {label} must be a real date in {DATE_HINT} format. Please try again.")
-        elif date > datetime.date.today():                # future dates are rejected
-            print(f"  -> {label} cannot be in the future. Please try again.")
+            continue
+        problem = date_problem(date, earliest)
+        if problem is not None:
+            print(f"  -> {label} {problem}. Please try again.")
         else:
             return date.strftime(DATE_FORMAT)
 
@@ -320,10 +333,11 @@ def prompt_current_odometer(last_service_km: int, last_known_odometer: int | Non
 # MAINTENANCE HISTORY QUESTIONS (add, choose, edit)
 # ======================================================================
 
-def prompt_service_entry(parts: list[str], part_name: str | None = None) -> dict:
+def prompt_service_entry(parts: list[str], part_name: str | None = None,
+                         earliest: datetime.date | None = None) -> dict:
     """Ask for one workshop invoice: the part(s) serviced, then the date, odometer and
     an optional note, typed once for the whole invoice. part_name skips the part
-    question when it is already known.
+    question when it is already known; earliest is the first allowed service date.
     Returns {"part_names": [...], "service_date", "service_odometer", "notes"}."""
     print("\n--- Add an invoice (from your workshop invoice) ---")
     if part_name is None:
@@ -332,7 +346,7 @@ def prompt_service_entry(parts: list[str], part_name: str | None = None) -> dict
     else:
         print(f"Part: {part_name}")
         part_names = [part_name]
-    service_date = prompt_past_date("Service date")
+    service_date = prompt_past_date("Service date", earliest)
     service_odometer = prompt_km("Odometer at service (km)")
     notes = input("Workshop / notes (optional, press Enter to skip): ").strip()
     return {"part_names": part_names, "service_date": service_date,
@@ -356,9 +370,11 @@ def prompt_service_choice(entries: list[dict], action: str) -> dict | None:
         print(f"  -> Please enter a number from 1 to {len(entries)}, or 0 to cancel.")
 
 
-def prompt_updated_service(current: dict, parts: list[str]) -> dict:
+def prompt_updated_service(current: dict, parts: list[str],
+                           earliest: datetime.date | None = None) -> dict:
     """Let the user change a service's part, date, odometer and note (Enter keeps the
-    old value). Returns an updated copy; main.py checks it and saves it."""
+    old value); a new date can't be before `earliest`.
+    Returns an updated copy; main.py checks it and saves it."""
     print("\n--- Edit service (press Enter to keep the current value) ---")
     updated = dict(current)             # edit a copy; main.py saves it
 
@@ -379,8 +395,8 @@ def prompt_updated_service(current: dict, parts: list[str]) -> dict:
         date = parse_date(typed)
         if date is None:
             print(f"  -> Use {DATE_HINT}, or press Enter to keep.")
-        elif date > datetime.date.today():
-            print("  -> The service date cannot be in the future.")
+        elif date_problem(date, earliest) is not None:
+            print(f"  -> The service date {date_problem(date, earliest)}.")
         else:
             updated["service_date"] = date.strftime(DATE_FORMAT)
             break

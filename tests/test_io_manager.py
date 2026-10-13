@@ -60,3 +60,11 @@ def test_multi_choice_counts_a_repeated_number_once():
         assert io_manager.prompt_multi_choice("Part numbers", ["A", "B", "C", "D"]) == ["D", "A"]
     finally:
         builtins.input = saved_input
+
+
+def test_service_date_cannot_be_before_the_model_year_or_in_the_future():
+    import datetime
+    start_2020 = datetime.date(2020, 1, 1)
+    assert io_manager.date_problem(datetime.date(2019, 12, 31), start_2020) is not None
+    assert io_manager.date_problem(datetime.date(2020, 1, 1), start_2020) is None
+    assert io_manager.date_problem(datetime.date.today() + datetime.timedelta(days=1), None) is not None

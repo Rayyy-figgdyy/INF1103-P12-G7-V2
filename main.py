@@ -43,6 +43,15 @@ def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
     return final_record
 
 
+def earliest_service_date(user: dict) -> datetime.date | None:
+    """Return 1 January of the car's model year (e.g. 01-01-2020 for a 2020 model):
+    no service can be dated before the car was made. None if the year is unknown."""
+    year = data_manager.get_model_year(user["car_model"])
+    if year is None:
+        return None
+    return datetime.date(year, 1, 1)
+
+
 def last_odometer_on_file(license_plate: str) -> int | None:
     """Return the highest odometer reading saved for this car, from its AI checks
     and its maintenance history together, or None if there is none."""
@@ -66,7 +75,7 @@ def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
 
     history = data_manager.history_for_plate(user["license_plate"])
     while True:
-        invoice = io_manager.prompt_service_entry(parts, part_name)
+        invoice = io_manager.prompt_service_entry(parts, part_name, earliest_service_date(user))
         problem = logic_manager.check_service_odometer(
             history, invoice["service_date"], invoice["service_odometer"])
         if problem is None:
@@ -134,7 +143,7 @@ def edit_service_flow(user: dict) -> None:
         return
 
     parts = data_manager.list_parts(user["car_model"])
-    updated = io_manager.prompt_updated_service(chosen, parts)
+    updated = io_manager.prompt_updated_service(chosen, parts, earliest_service_date(user))
     # Business rule 1: the edited odometer must still fit the other services.
     problem = logic_manager.check_service_odometer(
         entries, updated["service_date"], updated["service_odometer"],
