@@ -46,10 +46,10 @@ LICENSE_PLATE_PATTERN = re.compile(r"^[A-Z]{1,3}\d{1,4}[A-Z]$")
 # Sanity cap: any odometer reading above this is treated as a typing mistake.
 MAX_ODOMETER_KM = 2_000_000
 
-# Users type and see DD/MM/YYYY; dates are SAVED as YYYY-MM-DD (sorts and
-# calculates correctly). parse_date() and show_date() convert between the two.
-DATE_FORMAT = "%d/%m/%Y"
-DATE_HINT = "DD/MM/YYYY"
+# Users type, see and save dates as DD-MM-YYYY. parse_date() validates
+# the input and show_date() safely formats saved values for the screen.
+DATE_FORMAT = "%d-%m-%Y"
+DATE_HINT = "DD-MM-YYYY"
 
 
 # ======================================================================
@@ -57,22 +57,21 @@ DATE_HINT = "DD/MM/YYYY"
 # ======================================================================
 
 def parse_date(typed: str) -> datetime.date | None:
-    """Turn a typed DD/MM/YYYY date (dashes allowed) into a date object.
-    Returns None if it isn't a real date, e.g. '31/02/2025'."""
+    """Turn a typed DD-MM-YYYY date into a date object.
+    Returns None if it isn't a real date, e.g. '31-02-2025'."""
     try:
-        cleaned = typed.replace("-", "/")                 # accept 12-10-2026 as well
-        return datetime.datetime.strptime(cleaned, DATE_FORMAT).date()
+        return datetime.datetime.strptime(typed, DATE_FORMAT).date()
     except ValueError:                                    # wrong format or impossible date
         return None
 
 
 def show_date(saved_date) -> str:
-    """Turn a saved 'YYYY-MM-DD' date into 'DD/MM/YYYY' for the screen.
+    """Turn a saved 'DD-MM-YYYY' date into 'DD-MM-YYYY' for the screen.
     Returns '-' if missing, or the raw value if it is damaged."""
     if not saved_date:
         return "-"
     try:
-        date = datetime.date.fromisoformat(str(saved_date))
+        date = datetime.datetime.strptime(str(saved_date), DATE_FORMAT).date()
         return date.strftime(DATE_FORMAT)
     except ValueError:
         return str(saved_date)          # damaged record: show as-is instead of crashing
@@ -127,7 +126,7 @@ def prompt_km(label: str) -> int:
 
 def prompt_past_date(label: str) -> str:
     """Ask for a real date that is today or earlier (e.g. last service date).
-    Returns it in the saved format, 'YYYY-MM-DD'."""
+    Returns it in the saved format, 'DD-MM-YYYY'."""
     while True:
         date = parse_date(input(f"{label} ({DATE_HINT}): ").strip())
         if date is None:
@@ -135,7 +134,7 @@ def prompt_past_date(label: str) -> str:
         elif date > datetime.date.today():                # future dates are rejected
             print(f"  -> {label} cannot be in the future. Please try again.")
         else:
-            return date.isoformat()
+            return date.strftime(DATE_FORMAT)
 
 
 def prompt_number_choice(label: str, options: list[str]) -> str:
@@ -160,4 +159,114 @@ def confirm_action(question: str) -> bool:
             return False
         print("  -> Please answer y or n.")
 
+
+def wait_for_enter() -> None:
+    """Pause until Enter is pressed, so results aren't pushed off screen by the menu."""
+    input("\nPress Enter to go back to the menu...")
+
+
+# ======================================================================
+# MAIN MENU
+# ======================================================================
+
+def prompt_main_menu(current_user: dict | None) -> str:
+    """Show the logged-in or logged-out menu and read a choice.
+    Returns the raw choice; main.py handles invalid ones."""
+    if current_user is None:
+        print(MENU_LOGGED_OUT)
+    else:
+        print(MENU_LOGGED_IN.format(name=current_user["name"],
+                                    plate=current_user["license_plate"],
+                                    car_model=current_user["car_model"]))
+    return input("Choose an option: ").strip()
+
+
+# ======================================================================
+# ACCOUNT: login, register, update, show profile
+# ======================================================================
+
+def prompt_login() -> str:
+    """Ask for the plate to log in with. Returns it normalised (e.g. 'SBA1234A');
+    main.py checks whether it is registered."""
+    print("\n--- Login ---")
+    while True:
+        plate = normalise_plate(input("License plate: "))
+        if plate:
+            return plate
+        print("  -> License plate cannot be empty. Please try again.")
+
+
+def prompt_identity(taken_plates: set[str]) -> dict:
+    """Ask for a name and a new, valid, unused plate when registering.
+    Returns {"name": ..., "license_plate": ...}."""
+    print("\n--- Register new profile ---")
+    name = prompt_text("Name")
+    while True:
+        plate = normalise_plate(input("License plate (e.g. SBA1234A): "))
+        # Two checks: right shape, and not already registered (taken_plates comes
+        # from main.py, because this file may not read the data files).
+        if not LICENSE_PLATE_PATTERN.match(plate):
+            print("  -> License plate must look like SBA1234A (letters, digits, then a letter). Please try again.")
+        elif plate in taken_plates:
+            print(f"  -> {plate} is already registered. Please try again.")
+        else:
+            return {"name": name, "license_plate": plate}
+
+
+def prompt_car_choice(car_models: list[str]) -> str:
+    """Ask which supported car (from cars.json) the user drives. Returns the model name."""
+    print("\nWhich car do you drive?")
+    return prompt_number_choice("Car number", car_models)
+
+
+def prompt_coe_expiry() -> str:
+    """Ask for the COE expiry date. Returns it as 'DD-MM-YYYY'."""
+    while True:
+        # Unlike service dates, a past date IS allowed: an expired COE is real
+        # information that the business rules act on.
+        coe = parse_date(input(f"COE expiry date ({DATE_HINT}): ").strip())
+        if coe:
+            return coe.strftime(DATE_FORMAT)
+        print(f"  -> COE expiry date must be a real date in {DATE_HINT} format. Please try again.")
+
+
+def prompt_updated_profile(current: dict) -> dict:
+    """Let the user change their name and COE date (Enter keeps the old value).
+    Returns an updated copy of the profile; main.py saves it."""
+    print("\n--- Update profile (press Enter to keep the current value) ---")
+    # Plate and car identify the account, so they are shown but not editable.
+    print(f"License plate: {current['license_plate']} (cannot be changed)")
+    print(f"Car:           {current['car_model']} ({current['car_condition']}) (cannot be changed)")
+
+    updated = dict(current)   # edit a copy; the original is untouched until main.py saves
+
+    new_name = input(f"Name [{current['name']}]: ").strip()
+    if new_name:
+        updated["name"] = new_name
+
+    while True:
+        typed = input(f"COE expiry date ({DATE_HINT}) [{show_date(current['coe_expiry_date'])}]: ").strip()
+        if not typed:
+            break                      # empty input = keep the old date
+        coe = parse_date(typed)
+        if coe:
+            updated["coe_expiry_date"] = coe.strftime(DATE_FORMAT)
+            break
+        print(f"  -> Use {DATE_HINT}, or press Enter to keep.")
+    return updated
+
+
+def display_user(user: dict) -> None:
+    """Print one user's profile (missing fields show as None, not a crash)."""
+    print("\n--- Profile ---")
+    print(f"Name:            {user.get('name')}")
+    print(f"License plate:   {user.get('license_plate')}")
+    print(f"Car model:       {user.get('car_model')}")
+    print(f"Car condition:   {user.get('car_condition')}")
+    print(f"COE expiry date: {show_date(user.get('coe_expiry_date'))}")
+
+
+# ======================================================================
+# MAINTENANCE CHECK QUESTIONS
+# ======================================================================
 

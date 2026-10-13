@@ -17,4 +17,4 @@ o What business rules, validations, or decision-making logic will be applied
 to the AI-generated outputs?
 
 <!-- URL of code repository -->
-https://github.com/Rayyy-figgdyy/INF1103-P12-G7
+https://github.com/Rayyy-figgdyy/INF1103-P12-G7-V2
