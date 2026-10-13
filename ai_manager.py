@@ -165,3 +165,92 @@ def build_prompt(record: dict) -> str:
 # ======================================================================
 # STEP 2: call_api (Gemini first, then Groq as backup)
 # ======================================================================
+
+def call_gemini(prompt: str, manual_path: str | None, client) -> str | None:
+    """Send the prompt to Gemini with the manual PDF attached.
+    Returns the reply text, or None on any error."""
+    try:
+        contents = [prompt]
+        if manual_path:
+            # The PDF is uploaded and attached so Gemini can read the whole manual
+            # itself, and base its answer on this car's own service schedule.
+            uploaded_manual = client.files.upload(file=manual_path)
+            contents = [uploaded_manual, prompt]
+        model = os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+        response = client.models.generate_content(model=model, contents=contents, config=GEMINI_CONFIG)
+        return response.text
+    except Exception as error:
+        # Any failure (no network, bad key, 503 busy, 429 rate limit, timeout) is
+        # logged and returns None, so ask_ai() moves on to the Groq backup.
+        logger.error("Gemini call failed: %s", error)
+        return None
+
+
+# ======================================================================
+# STEP 3: parse_response
+# ======================================================================
+
+def parse_response(reply: str | None) -> dict | None:
+    """Extract the JSON object from the AI's reply text.
+    Returns it as a dictionary, or None if there is no readable JSON object."""
+    if not reply or not reply.strip():
+        return None
+    # Take the text from the first { to the last }, ignoring ```json fences or chatter.
+    start = reply.find("{")
+    end = reply.rfind("}")
+    if start == -1 or end < start:
+        logger.error("No JSON object in AI response: %r", reply[:200])
+        return None
+    try:
+        data = json.loads(reply[start:end + 1])
+    except json.JSONDecodeError as error:
+        logger.error("AI response is not valid JSON: %s", error)
+        return None
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+# ======================================================================
+# STEP 4: validate_response
+# ======================================================================
+
+def validate_response(data: dict | None) -> dict | None:
+    """C3: check the parsed answer against the schema before anything uses it.
+    Returns a clean copy with ai_status "ok", or None to reject it."""
+    if not isinstance(data, dict):
+        return None
+
+    for key in REQUIRED_KEYS:
+        if key not in data:
+            logger.error("AI response is missing %r: %s", key, data)
+            return None
+
+    # urgency_score must be an int 1-10. 7.0 is accepted as 7; True/False are
+    # rejected explicitly because Python treats bool as a kind of int.
+    score = data["urgency_score"]
+    if isinstance(score, float) and score.is_integer():
+        score = int(score)
+    if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 10:
+        logger.error("AI response has an invalid urgency_score: %r", data["urgency_score"])
+        return None
+
+    if data["confidence"] not in VALID_CONFIDENCE:
+        logger.error("AI response has an invalid confidence: %r", data["confidence"])
+        return None
+
+    for key in ("overdue_summary", "recommended_action", "manual_reference"):
+        value = data[key]
+        if not isinstance(value, str) or not value.strip():
+            logger.error("AI response has an empty or invalid %r: %r", key, value)
+            return None
+
+    # Only the expected keys are copied; any extra keys from the AI are dropped.
+    return {
+        "urgency_score": score,
+        "confidence": data["confidence"],
+        "overdue_summary": data["overdue_summary"],
+        "recommended_action": data["recommended_action"],
+        "manual_reference": data["manual_reference"],
+        "ai_status": "ok",
+    }
