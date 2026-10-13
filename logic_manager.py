@@ -175,3 +175,25 @@ def evaluate(record: dict) -> dict:
 # score -- a number from 0 to 100, used to sort the urgent list
 # ======================================================================
 
+def score(record: dict) -> int:
+    """Return the risk score (0-100) for one check.
+    Used only to sort the urgent list, most serious first; it never changes
+    a decision. Returns 0 if the AI gave no urgency score."""
+    urgency = record.get("urgency_score")
+    if urgency is None:
+        return 0
+
+    # Points: urgency x 10, +15 if overdue, +10 if safety-critical, capped at 100.
+    facts = evaluate(record)
+    total = urgency * 10
+    if facts["is_overdue"]:
+        total = total + 15
+    if facts["is_safety_critical"]:
+        total = total + 10
+    return min(100, total)        # min(100, ...) caps it at 100
+
+
+# ======================================================================
+# route -- the final decision
+# ======================================================================
+
