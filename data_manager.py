@@ -35,8 +35,18 @@ VALID_ACTIONS = ("replace", "inspect", "rotate")
 # A new check is a "repeat" when ALL five inputs match a saved check. main.py then shows
 # the saved answer instead of calling the AI again: same inputs give the same result,
 # with no extra API usage. check_date is not compared, so a repeat on another day counts.
-REPEAT_FIELDS = ("license_plate", "part_name", "last_service_date",
-                 "last_service_mileage", "current_odometer")
+REPEAT_FIELDS = (
+    "license_plate",
+    "part_name",
+    "last_service_date",
+    "last_service_mileage",
+    "current_odometer",
+    "check_date",
+    "interval_km",
+    "interval_months",
+    "action",
+    "interval_stage",
+)
 
 
 # ======================================================================
