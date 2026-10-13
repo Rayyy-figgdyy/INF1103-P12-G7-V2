@@ -13,7 +13,7 @@ your car, type in a few numbers from your last workshop invoice, and the app
 tells you how urgently that part needs attention, whether it's overdue, and
 when you should book it in.
 
-Our test setup has four cars: a brand new Honda Civic 2025, and three used
+Our test setup has four cars: a brand new Honda City 2025, and three used
 cars, a Mazda 3 Hatchback 2020, a Hyundai Elantra 2021 and a Kia Forte.
 
 You can check six parts on each car: Engine Oil, Brake Pads, Spark Plugs,

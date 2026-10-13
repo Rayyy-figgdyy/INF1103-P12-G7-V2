@@ -193,7 +193,7 @@ def test_manual_path_only_when_file_exists():
 def test_real_catalogue_file_is_valid():
     # Guards the committed data/cars.json against typos.
     assert data_manager.list_car_models() == [
-        "Honda Civic 2025", "Mazda 3 Hatchback 2020", "Hyundai Elantra 2021", "Kia Forte"]
+        "Honda City 2025", "Mazda 3 Hatchback 2020", "Hyundai Elantra 2021", "Kia Forte"]
     for model in data_manager.list_car_models():
         assert len(data_manager.list_parts(model)) >= 1, model
 

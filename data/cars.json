@@ -2,17 +2,17 @@
   "_note": "The 4 cars in our test environment. Each 'schedule' entry is taken from that car's owner's manual (normal driving conditions): 'action' is what the manual says to do (replace, inspect or rotate), and 'km'/'months' is the interval, whichever comes first (0 = the manual gives no limit of that kind). Where the manual says 'first at X, then every Y', km/months is the first change and repeat_km/repeat_months the interval after that. 'note' quotes the manual where it helps. 'year' is the model year: no service can be dated before 1 January of that year. 'manual' is the PDF the AI reads; 'schedule_source' says which schedule and pages the numbers come from.",
   "cars": [
     {
-      "model": "Honda Civic 2025",
+      "model": "Honda City 2025",
       "condition": "Brand New",
       "year": 2025,
-      "manual": "manuals/honda_civic_2025.pdf",
-      "schedule_source": "Owner's manual, Maintenance Schedule, except South African models (pp. 647-648), normal conditions; the manual also has notes for Singaporean models.",
+      "manual": "manuals/honda_city_2025.pdf",
+      "schedule_source": "Owner's manual, Maintenance Schedule, except South African models (printed pp. 377-380), normal conditions; Singaporean models are listed in the Specifications section.",
       "schedule": {
-        "Engine Oil":        {"action": "replace", "km": 10000, "months": 12, "note": "Manual: replace 'when indicator comes on or 1 year' (no km figure); the 10,000 km limit was added by our team"},
-        "Brake Pads":        {"action": "inspect", "km": 10000, "months": 12, "note": "Manual: inspect front and rear brakes every 10,000 km or 1 year"},
-        "Spark Plugs":       {"action": "replace", "km": 100000, "months": 0, "note": "Except E85 models"},
-        "Tyres":             {"action": "rotate", "km": 10000, "months": 0},
-        "Engine Air Filter": {"action": "replace", "km": 30000, "months": 0, "note": "Air cleaner element"},
+        "Engine Oil":        {"action": "replace", "km": 10000, "months": 12, "note": "Normal: replace every 10,000 km or 1 year"},
+        "Brake Pads":        {"action": "inspect", "km": 10000, "months": 12, "note": "Manual: inspect front and rear brakes every 10,000 km or 1 year; the car has front disc brakes and rear drum brakes"},
+        "Spark Plugs":       {"action": "replace", "km": 100000, "months": 0, "note": "Replace every 100,000 km"},
+        "Tyres":             {"action": "rotate", "km": 10000, "months": 0, "note": "Rotate every 10,000 km; check tyre inflation and condition at least once per month"},
+        "Engine Air Filter": {"action": "replace", "km": 30000, "months": 0, "note": "Replace air cleaner element every 30,000 km for non-Indian models"},
         "Coolant":           {"action": "replace", "km": 200000, "months": 120, "repeat_km": 100000, "repeat_months": 60, "note": "First at 200,000 km or 10 years, then every 100,000 km or 5 years"}
       }
     },
