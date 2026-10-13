@@ -11,7 +11,6 @@ It also holds the rules for the maintenance history: which service is the latest
 a part, odometer readings that must go up over time (business rule 1), and which AI
 check is the latest one for each part.
 All arithmetic is done here, not by the AI. No screen, AI or file access.
-See explanations/logic_manager_explained.txt for a full walkthrough.
 """
 import datetime    # Python's built-in tools for dates
 

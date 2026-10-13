@@ -7,7 +7,6 @@ validate_response; process() runs all four and is what main.py calls.
 Gemini (manual PDF attached) is the main AI; Groq (text excerpt of the manual)
 is the backup; if both fail, FALLBACK_ASSESSMENT -> "NEEDS MANUAL REVIEW".
 No business rules here, and errors go to the log, never print().
-See explanations/ai_manager_explained.txt for a full walkthrough.
 """
 import json
 import logging
@@ -32,7 +31,7 @@ API_TIMEOUT_SECONDS = 60
 RETRY_DELAY_SECONDS = 3      # pause before retrying when neither AI replied
 
 GEMINI_CONFIG = {
-    # C4: temperature 0 removes randomness, so the same check gets the same answer.
+    # C4: temperature 0 reduces response variability; repeated saved checks reuse stored results.
     "temperature": 0,
     # C3: ask for a JSON-only reply so parse_response() can read it.
     "response_mime_type": "application/json",

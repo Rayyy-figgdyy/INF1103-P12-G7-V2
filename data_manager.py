@@ -9,7 +9,6 @@ Four JSON files in data/:
 Pipeline: io -> ai -> logic -> data. Only main.py calls this file; no other manager
 reads or writes these data files.
 Only saving, loading and lookups here: no business decisions and no print().
-See explanations/data_manager_explained.txt for a full walkthrough.
 """
 import json
 import logging

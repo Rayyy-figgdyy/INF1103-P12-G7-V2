@@ -47,7 +47,7 @@ shows the earlier result.
 ### First time only (Mac)
 
 ```bash
-cd INF1103-P12-G7                  # go into the project folder
+cd INF1103-P12-G7-V2               # go into the project folder
 python3 -m venv .venv              # make a virtual environment
 source .venv/bin/activate          # turn it on; your prompt should now show (.venv)
 pip install -r requirements.txt    # install the libraries we use
@@ -155,9 +155,9 @@ that talks to more than one manager.
    `validate_response` checks the keys, the types and that the score is
    between 1 and 10. If the answer is bad, it retries once and then falls
    back safely.
-4. C4, flat files with the same results each run. Everything is stored as
-   JSON in the `data` folder. The AI runs at temperature 0 so its answers stay
-   consistent.
+4. C4, flat-file persistence and repeat handling. Everything is stored as
+   JSON in the `data` folder. Temperature 0 reduces AI response variability, and
+   repeated saved checks reuse their stored result.
 5. C5, runs in Docker. See the `Dockerfile`. The tests run during the build.
 6. C6, Git history. Small commits, one feature per branch (see below).
 7. Rule 1, the odometer can't go backwards.

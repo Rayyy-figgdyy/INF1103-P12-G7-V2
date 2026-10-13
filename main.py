@@ -10,7 +10,6 @@ maintenance history; identical checks are answered from prompt_records.json.
 main.py is the only file that talks to all four managers; they never call each other.
 Procedural only (C1: no classes); the logged-in user lives in main() as current_user.
 
-See explanations/main_explained.txt for a full walkthrough.
 """
 
 import datetime

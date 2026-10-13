@@ -7,7 +7,6 @@ a message and a re-prompt. It hands clean values back to main.py and never saves
 files, calls the AI or makes business decisions; main.py passes in any saved data
 it needs (e.g. plates already taken). Pipeline: io -> ai -> logic -> data.
 
-See explanations/io_manager_explained.txt for a full walkthrough.
 """
 import datetime
 import re
