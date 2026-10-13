@@ -270,3 +270,111 @@ def display_user(user: dict) -> None:
 # MAINTENANCE CHECK QUESTIONS
 # ======================================================================
 
+def prompt_part_choice(parts: list[str]) -> str:
+    """Ask which part to check (only parts with a stored interval are listed).
+    Returns the part name."""
+    print("\nWhich part are you checking?")
+    return prompt_number_choice("Part number", parts)
+
+
+def prompt_service_details(last_known_odometer: int | None) -> dict:
+    """Ask for last service date and odometer (from the invoice) and today's odometer.
+    Returns a dict with last_service_date, last_service_mileage, current_odometer."""
+    print("\nFrom your last workshop invoice for this part:")
+    last_service_date = prompt_past_date("Date of last service")
+    last_service_mileage = prompt_km("Odometer at last service (km)")
+
+    # last_known_odometer = highest saved reading for this car (from main.py),
+    # or None if the car has no saved checks yet.
+    if last_known_odometer is not None:
+        print(f"(Last odometer reading on file for this car: {last_known_odometer:,} km)")
+
+    # BUSINESS RULE 1 (input validation): an odometer only goes up, so today's
+    # reading may not be below the last-service reading or the last reading on file.
+    while True:
+        current_odometer = prompt_km("Current odometer reading (km)")
+        if current_odometer < last_service_mileage:
+            print(f"  -> Can't be lower than the odometer at last service ({last_service_mileage:,} km). Please try again.")
+        elif last_known_odometer is not None and current_odometer < last_known_odometer:
+            print(f"  -> Can't be lower than the last reading on file ({last_known_odometer:,} km). Please try again.")
+        else:
+            break
+
+    return {
+        "last_service_date": last_service_date,
+        "last_service_mileage": last_service_mileage,
+        "current_odometer": current_odometer,
+    }
+
+
+# ======================================================================
+# SHOWING RESULTS (display_record, display_list, display_result per the brief)
+# All use .get(), km() and show_date(), so a record with missing or damaged
+# fields is still shown instead of crashing the screen.
+# ======================================================================
+
+def display_message(message: str) -> None:
+    """Print a message on behalf of main.py, which is not allowed to print."""
+    print(message)
+
+
+def display_record(record: dict) -> None:
+    """Print one maintenance check in full, one detail per line."""
+    urgency = record.get("urgency_score")
+    if urgency is None:
+        urgency_text = "n/a"            # the AI could not give a score
+    else:
+        urgency_text = f"{urgency}/10"
+
+    print("\n--- Maintenance check ---")
+    print(f"Part:               {record.get('part_name')}  ({record.get('car_model')}, {record.get('license_plate')})")
+    print(f"Checked on:         {show_date(record.get('check_date'))} at {km(record.get('current_odometer'))} km")
+    print(f"Last serviced:      {show_date(record.get('last_service_date'))} at {km(record.get('last_service_mileage'))} km")
+    print(f"Schedule:           every {km(record.get('interval_km'))} km or {record.get('interval_months')} months")
+    print(f"Since last service: {km(record.get('km_since_service'))} km / {record.get('days_since_service')} days")
+    if record.get("is_overdue"):        # only shown for overdue parts
+        print(f"Overdue by:         {km(record.get('km_overdue'))} km / {record.get('days_overdue')} days")
+    print(f"AI urgency:         {urgency_text} (confidence: {record.get('confidence')})")
+    print(f"Answered by:        {record.get('ai_provider', 'n/a')}")
+    print(f"AI summary:         {record.get('overdue_summary')}")
+    print(f"Manual reference:   {record.get('manual_reference')}")
+    print(f"OUTCOME:            {record.get('outcome')}")
+    print(f"Service by:         {show_date(record.get('recommended_service_date'))}")
+    print(f"Risk score:         {record.get('risk_score')}/100")
+    print(f"Advice:             {record.get('recommended_action')}")
+
+
+def display_list(records: list[dict]) -> None:
+    """Print many checks as a table, one row each (history and urgent views)."""
+    if not records:
+        print("\nNo records to show.")
+        return
+
+    # Fixed-width columns: :<12 = left-align in 12 chars, :>10 = right-align in 10
+    # (so the km figures line up on the right). Header and rows use the same widths.
+    print(f"\n{'Checked':<12}{'Part':<20}{'Odometer':>10}  {'Urgency':<8}{'Service by':<12}Outcome")
+    for r in records:
+        urgency = r.get("urgency_score")
+        urgency_text = "-" if urgency is None else str(urgency)
+        part = str(r.get("part_name"))[:19]          # cut to 19 so it fits the 20-wide column
+        print(f"{show_date(r.get('check_date')):<12}"
+              f"{part:<20}"
+              f"{km(r.get('current_odometer')):>10}  "
+              f"{urgency_text:<8}"
+              f"{show_date(r.get('recommended_service_date')):<12}"
+              f"{r.get('outcome')}")
+
+
+def display_result(record: dict) -> None:
+    """Print a check that has just been saved (banner + full details)."""
+    print("\n>>> Assessment saved.")
+    display_record(record)
+
+
+def display_repeated(previous: dict) -> None:
+    """Print the earlier saved check when the user re-enters identical details,
+    instead of asking the AI again."""
+    print("\nThis is repeated information.")
+    print(f"You checked this part with the same details on {show_date(previous.get('check_date'))}, "
+          "so it was not sent to the AI again. Your saved assessment:")
+    display_record(previous)
