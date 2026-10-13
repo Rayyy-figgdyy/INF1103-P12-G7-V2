@@ -201,3 +201,95 @@ def delete_user(license_plate: str) -> bool:
 # cars.json can't crash the app.
 # ======================================================================
 
+def is_valid_interval(entry) -> bool:
+    """Return True if a schedule line looks like {"km": 10000, "months": 12},
+    with both values whole numbers above zero."""
+    return (isinstance(entry, dict)
+            and isinstance(entry.get("km"), int) and entry["km"] > 0
+            and isinstance(entry.get("months"), int) and entry["months"] > 0)
+
+
+def is_valid_car(car) -> bool:
+    """Return True if a car entry has a non-blank model, a condition of Brand New or
+    Used, a manual path (text) and a schedule (a dictionary)."""
+    return (isinstance(car, dict)
+            and isinstance(car.get("model"), str) and car["model"].strip() != ""
+            and car.get("condition") in VALID_CONDITIONS
+            and isinstance(car.get("manual"), str)
+            and isinstance(car.get("schedule"), dict))
+
+
+def load_cars() -> list[dict]:
+    """Return every valid car from cars.json, in file order, with only valid schedule
+    lines kept. Returns [] if the file is missing, damaged or has no "cars" list."""
+    data = read_json(CARS_FILE)
+    if not isinstance(data, dict) or not isinstance(data.get("cars"), list):
+        if data is not None:
+            logger.error("%s has no 'cars' list.", CARS_FILE)
+        return []
+
+    cars = []
+    for car in data["cars"]:
+        # An invalid car is skipped and logged; the other cars still load.
+        if not is_valid_car(car):
+            logger.error("Skipping invalid car entry in %s: %r", CARS_FILE, car)
+            continue
+
+        # An invalid schedule line is dropped silently (not logged), so that part
+        # just won't be offered for this car.
+        good_schedule = {}
+        for part, interval in car["schedule"].items():
+            if is_valid_interval(interval):
+                good_schedule[part] = interval
+
+        clean_car = dict(car)           # a copy, so the loaded data isn't changed
+        clean_car["schedule"] = good_schedule
+        cars.append(clean_car)
+    return cars
+
+
+def list_car_models() -> list[str]:
+    """Return the car model names to choose from at registration, in file order."""
+    names = []
+    for car in load_cars():
+        names.append(car["model"])
+    return names
+
+
+def find_car(car_model: str) -> dict | None:
+    """Return the cars.json entry with this exact model name, or None."""
+    for car in load_cars():
+        if car["model"] == car_model:
+            return car
+    return None
+
+
+def list_parts(car_model: str) -> list[str]:
+    """Return the part names in this car's schedule, A-Z ([] if the car is unknown)."""
+    car = find_car(car_model)
+    if car is None:
+        return []
+    return sorted(car["schedule"])
+
+
+def get_service_interval(car_model: str, part_name: str) -> dict | None:
+    """Return e.g. {"interval_km": 10000, "interval_months": 12} for this car and part,
+    or None if either is unknown."""
+    car = find_car(car_model)
+    if car is None or part_name not in car["schedule"]:
+        return None
+    interval = car["schedule"][part_name]
+    return {"interval_km": interval["km"], "interval_months": interval["months"]}
+
+
+def get_manual_path(car_model: str) -> str | None:
+    """Return the full path to this car's manual PDF, or None if the car is unknown
+    or the file isn't there (a missing file is logged)."""
+    car = find_car(car_model)
+    if car is None:
+        return None
+    path = os.path.join(PROJECT_DIR, car["manual"])
+    if not os.path.isfile(path):
+        logger.error("Manual for %s not found at %s", car_model, path)
+        return None
+    return path
