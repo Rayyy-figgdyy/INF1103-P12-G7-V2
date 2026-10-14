@@ -89,5 +89,23 @@
     "service_odometer": 150000,
     "notes": "",
     "service_id": 11
+  },
+  {
+    "license_plate": "SJD20C",
+    "part_name": "Brake Pads",
+    "service_action": "inspect",
+    "service_date": "20-12-2025",
+    "service_odometer": 2000,
+    "notes": "",
+    "service_id": 12
+  },
+  {
+    "license_plate": "SJD20C",
+    "part_name": "Brake Pads",
+    "service_action": "replace",
+    "service_date": "20-07-2026",
+    "service_odometer": 5000,
+    "notes": "",
+    "service_id": 13
   }
 ]

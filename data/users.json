@@ -19,5 +19,12 @@
     "car_model": "Kia Forte",
     "car_condition": "Used",
     "coe_expiry_date": "20-08-2032"
+  },
+  {
+    "name": "ryutaro",
+    "license_plate": "SJD20C",
+    "car_model": "Honda City 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "20-11-2026"
   }
 ]
