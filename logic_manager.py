@@ -49,8 +49,8 @@ URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED", "NEEDS MANUAL
 # ======================================================================
 
 def to_date(value) -> datetime.date | None:
-    """Turn saved text like '03-09-2025' into a date.
-    Returns None if the value is missing or isn't a valid date."""
+    """Turn saved text into real date.
+    Returns None if the value is missing or not a valid date."""
     try:
         return datetime.datetime.strptime(str(value), "%d-%m-%Y").date()
     except (TypeError, ValueError):
@@ -66,15 +66,15 @@ def recommend_service_date(check_date: datetime.date, is_overdue: bool,
                             km_left: int | None, days_left: int | None,
                             km_per_day: float, urgency: int | None,
                             safety_critical: bool) -> datetime.date | None:
-    """BUSINESS RULE 3: work out the "service by" date for one part.
+    """BUSINESS RULE 3: works out the date a part should be serviced by.
     Starts from the schedule's due date, then brings it forward if the AI's
-    urgency is high. Returns the recommended date."""
+    urgency is high. Returns a recommended date"""
     # ---- Part A: the schedule's due date ----
     if is_overdue:
         due = check_date
     else:
-        # Due when EITHER limit runs out: the time limit, or the km limit reached at
-        # the owner's own driving pace. int() rounds down, so we never recommend late.
+      # Due when either time limit runs out or KM limit at the rate the driver drives.
+        # int() will round down so the date will recommend early rather than late
         possible_dates = []
         if days_left is not None:
             possible_dates.append(add_days(check_date, days_left))
@@ -84,25 +84,24 @@ def recommend_service_date(check_date: datetime.date, is_overdue: bool,
         if possible_dates:
             due = min(possible_dates)       # min = the earliest date
         else:
-            # A mileage-only interval needs a measured driving pace for a date estimate.
-            # Do not incorrectly say "service today" when no estimate is possible.
             due = None
 
-    # ---- Part B: the AI's urgency can bring it forward ----
-    # Urgency 8-10: within 3 days. Urgency 5-7: within 14 days. 1-4: keep Part A.
+    # ---- Part B: High AI urgency can bring it forward ----
+    # Urgency 8-10: within 3 days. Urgency 5-7: within 14 days. 1-4: date from part A.
     if urgency is not None and urgency >= 8:
         days_allowed = 3
     elif urgency is not None and urgency >= 5:
         days_allowed = 14
     else:
-        days_allowed = None                 # low urgency: keep the schedule's date
+        days_allowed = None                 # low urgency: stick to Part A date
 
     if days_allowed is not None:
         if safety_critical:
             # Brake pads and tyres get half the time (3 -> 1 day, 14 -> 7 days),
             # never less than 1 day.
             days_allowed = max(1, days_allowed // 2)
-        # min(): urgency can only bring the date forward, never push it later.
+       # min(): Taking the earlier date means urgency can only bring date forward but never
+        # push it back
         urgent_date = add_days(check_date, days_allowed)
         due = min(due, urgent_date) if due is not None else urgent_date
 
@@ -114,30 +113,31 @@ def recommend_service_date(check_date: datetime.date, is_overdue: bool,
 # ======================================================================
 
 def evaluate(record: dict) -> dict:
-    """Work out the facts about one check: km/days since service, overdue status,
-    km per day, safety-critical, COE days left and the "service by" date.
-    Returns a NEW dictionary of these facts; the record itself isn't changed."""
+    """Work out the facts about one check: km and days since the last service,
+    whether it's overdue, how far the owner drives a day, whether it's a
+    safety-critical part, days left on the COE, and the service-by date.
+    These come back as a new dictionary; the record itself isn't changed."""
 
     # ---- The dates ----
-    # Missing check date -> today; missing last-service date -> 0 days since service.
+    # No check date means using todays date; missing last-service date means 0 days since service..
     check_date = to_date(record.get("check_date")) or datetime.date.today()
     last_service_date = to_date(record.get("last_service_date")) or check_date
 
     # ---- The stored schedule (business rule 2) ----
-    # Intervals always come from our stored schedule (cars.json), never from the AI.
+    # Intervals always come from our schedules in car.json, never from the AI.
     interval_km = int(record.get("interval_km") or 0)
     interval_days = round((record.get("interval_months") or 0) * DAYS_PER_MONTH)
 
     # ---- How far, and how long, since the last service ----
-    # max(0, ...) guards against bad data giving negative distances or days.
+    # max(0, ...) stops invalid data such as negative from going through
     odometer_now = int(record.get("current_odometer") or 0)
     odometer_at_service = int(record.get("last_service_mileage") or 0)
     km_since = max(0, odometer_now - odometer_at_service)
     days_since = max(0, (check_date - last_service_date).days)
 
     # ---- Is it overdue? (by distance, by time, or both) ----
-    # Overdue when EITHER limit is reached ("10,000 km or 12 months, whichever comes
-    # first", as manuals put it). A limit of 0 means the part has no such limit.
+    # Manual says overdue when "10,000 km or 12 months" so reaching either limit works
+    # A limit of 0 means the part has no such limit in the manual.
     overdue_by_km = interval_km > 0 and km_since >= interval_km
     overdue_by_time = interval_days > 0 and days_since >= interval_days
     is_overdue = overdue_by_km or overdue_by_time
@@ -162,11 +162,11 @@ def evaluate(record: dict) -> dict:
     else:
         km_per_day = 0.0                    # serviced today: no pace to measure yet
 
-    # ---- Is it a safety-critical part (brake pads or tyres)? ----
+    # ---- Is it a safety-critical part? ----
     part = str(record.get("part_name", "")).strip().lower()
     safety_critical = part in SAFETY_CRITICAL_PARTS
 
-    # ---- Days until the COE expires (a negative number = already expired) ----
+    # ---- Days until COE expires (negative means already expired)----
     coe_date = to_date(record.get("coe_expiry_date"))
     if coe_date is not None:
         coe_days_left = (coe_date - check_date).days
