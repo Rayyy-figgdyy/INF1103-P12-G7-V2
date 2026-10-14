@@ -46,7 +46,7 @@ REPEAT_FIELDS = (
     "last_service_action",
     "current_odometer",
     "check_date",
-    "intervalg_km",
+    "interval_km",
     "interval_months",
     "action",
     "interval_stage",
