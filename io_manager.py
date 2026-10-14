@@ -27,7 +27,7 @@ import re
 # FIXED SETTINGS
 
 # CAPITAL names are "constants": settings that never change while the app runs.
-# Triple quotes """...""" let one string span many lines, so the menu looks as typed.
+# Triple quotes """...""" let one string span many lines, so the menu looks as typed for readability.
 MENU_LOGGED_OUT = """
 ==== Car Maintenance & Service Risk Tracker ====
 Not logged in
@@ -272,7 +272,7 @@ def prompt_multi_choice(label: str, options: list[str]) -> list[str]:
             chosen = []
             for t in typed:
                 option = options[int(t) - 1]
-                if option not in chosen:        # typing "4,4" only counts once
+                if option not in chosen:        # typing "4,4" only counts once for that part
                     chosen.append(option)
             return chosen
         print(f"  -> Enter one or more numbers from 1 to {len(options)}, separated by commas.")
