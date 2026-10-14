@@ -1,45 +1,46 @@
 """
-logic_manager.py -- the business rules (Logic layer).
+logic_manager.py - the business rules/logic layer
 
-Takes one maintenance check that the AI has already scored and applies our rules:
+Takes one maintenance check that the AI has already scored and applies business rules:
   - evaluate(): the facts (overdue by km OR time, km/day, COE days left, service-by date)
   - score():    a 0-100 risk score, used only to sort the urgent list
   - route():    the final outcome text; includes the urgency + confidence rule
 
-Rules held here: overdue = whichever limit comes first, brake pads and tyres are
-safety-critical, the "service by" date (business rule 3) and the Singapore COE rules.
+It also looks after the maintenance history: finding the latest servicing of each
+part, making sure odometer readings never go backwards (business rule 1), and
+finding the latest check for each part.
 
-It also holds the rules for the maintenance history: which service is the latest for
-a part, odometer readings that must go up over time (business rule 1), and which AI
-check is the latest one for each part.
-
-All arithmetic is done here, not by the AI. No screen, AI or file access.
+Brake pads and tyres are safety-critical, and the COE rules follow how
+COEs work in Singapore. Sll the dates, distances and overdue amounts are worked out
+here ourselves instead of leaving them to the AI. The one exception is the brake
+pad history: we check the records here, then the AI works out the replacement
+pattern from them. This file never prints anything, calls the AI or opens the
+data files.
 """
-import datetime    # Python's built-in tools for dates
+import datetime    # Python's lib for dates
 
 # ======================================================================
-# FIXED SETTINGS
+#  GLOBAL VARIABLES (Can update if required)
 # ======================================================================
 
-# A failure of these parts is a safety risk (stopping and grip), so they get extra
-# urgency below. Lower case so they match part names after .lower().
+# Safety critical parts that get extra urgency
 SAFETY_CRITICAL_PARTS = ("brake pads", "tyres")
 
 DAYS_PER_MONTH = 30.44           # average days in a month (so 24 months = 731 days)
 COE_DEFER_WINDOW_DAYS = 180      # "COE ends soon" = within 180 days (about 6 months)
 
-# Plausibility limit for odometer readings: even a hard-driven car can't cover more
-# than this many km a day on average, so a bigger jump is treated as a typing mistake.
+# Plausibility for odometer input; even heavy drivers unlikely to drive past this amount, 
+# so any input past this amount is considered an error
 MAX_KM_PER_DAY = 2_000
 
-# A Singapore COE lasts 10 years, so a COE can't expire more than 10 years from today.
+# COE Validation (Not more than 10 years expiry from previous date)
 COE_MAX_YEARS = 10
 
 # What each stored action is called in the outcome text of rule 5 below.
 OVERDUE_WORDING = {"replace": "part", "inspect": "inspection", "rotate": "tyre rotation"}
 
-# Outcomes that need the owner's attention: any outcome starting with one of these
-# is listed in menu option 3.
+# Outcomes for the owner's action: any outcome starting with one of these
+# is in the urgent list (menu option 6)
 URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED", "NEEDS MANUAL REVIEW")
 
 
