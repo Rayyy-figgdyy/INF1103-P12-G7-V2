@@ -27,7 +27,7 @@ The intended users are owners of the supported cars who want a simple way to rec
 
 ## 2. User Inputs
 
-The user creates a profile using their name, vehicle licence plate, supported car model and COE expiry date. Maintenance history records contain the selected maintenance item, service date, service odometer reading and an optional note.
+The user creates a profile using their name, vehicle licence plate, supported car model and COE expiry date. Maintenance history records contain the selected maintenance item, performed `service_action` (inspect, replace, or rotate for Tyres), service date, service odometer reading and an optional note. The performed action is separate from the manufacturer's scheduled action.
 
 When checking a part, the application uses the latest relevant service record together with the current odometer reading. Input is validated before processing. Examples include valid date format, valid menu choices, required fields, and preventing odometer readings from moving backwards.
 
@@ -44,7 +44,9 @@ The AI is instructed to use the manufacturer's **normal maintenance schedule** a
 - recommended action
 - manual reference
 
-The AI does not perform the application's final deterministic calculations. Its structured assessment is passed to `logic_manager.py`, where the program combines the AI output with the stored manufacturer interval and maintenance history.
+The AI produces the urgency assessment, while the application's final deterministic calculations remain in `logic_manager.py`. For eligible Brake Pad checks, the AI receives both the manufacturer guidance and validated personal replacement history before producing its single urgency score.
+
+For Brake Pads only, personalisation is used when there are at least three valid confirmed replacement records. Python validates and filters the records but does not calculate replacement intervals. The AI calculates the replacement-to-replacement mileage intervals itself and combines that pattern with the manufacturer's normal maintenance guidance to produce one urgency score. The manufacturer manual remains the authoritative baseline, so personal history cannot be used to delay or ignore a required inspection or service. If the history is insufficient or unreliable, the AI uses the manufacturer guidance without personalised history. Relevant eligible history changes invalidate cached results.
 
 ## 4. Business Rules and Decision Logic
 

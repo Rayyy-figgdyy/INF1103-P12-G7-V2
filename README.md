@@ -24,7 +24,8 @@ Tyres, Engine Air Filter and Coolant.
 1. Register with your name, licence plate, car and COE expiry date (or log in
    if you've used it before).
 2. Add the services you've had done to your maintenance history (option 1):
-   the part, the date and the odometer reading from the workshop invoice.
+   the part, the date, odometer reading and action from the workshop invoice
+   (inspection, replacement, or rotation for Tyres).
    You can view, edit and delete these entries too (options 2 to 4).
    Dates are always DD-MM-YYYY.
 3. Choose Check a part (option 5) and pick one, for example Brake Pads. The
@@ -37,9 +38,25 @@ Tyres, Engine Air Filter and Coolant.
 
 Your history shows each service with the latest urgency result next to it,
 and option 6 lists the parts whose latest check needs attention. If nothing
-has changed since a check (same service and same odometer reading), the app
+has changed since a check (including its date, vehicle details and brake history), the app
 won't ask the AI again. It just tells you "This is repeated information" and
 shows the earlier result.
+
+### Personalised brake-pad history
+
+With at least three valid confirmed brake-pad replacements, Python validates
+the saved records and sends the confirmed replacement points to the AI. The AI
+calculates the replacement-to-replacement mileage intervals itself. It then uses
+that personal history together with the manufacturer's normal maintenance guidance
+to produce one combined urgency score. There is no separate history urgency score.
+
+The manufacturer's manual remains the authoritative baseline. Personal history can
+add context for this specific car, but it must not be used to delay or ignore a
+manufacturer-required inspection or service. If fewer than three trustworthy
+replacement records are available, the AI uses the manufacturer guidance without
+personalised history. Older entries without a confirmed replacement action do not
+count toward the three-record requirement. Changes to eligible brake replacement
+history cause the next check to be reassessed instead of reusing a stale result.
 
 
 ## Getting it running
@@ -191,7 +208,7 @@ users.json has everyone's profile: name, licence plate, car and COE
 expiry. The app creates it.
 
 maintenance_history.json is each owner's service log: one entry per service
-(part, date, odometer and an optional note), each with its own service_id so
+(part, performed service_action, date, odometer and an optional note), each with its own service_id so
 it can be edited or deleted. The app creates it.
 
 prompt_records.json has every AI urgency check: what was sent, what the AI
