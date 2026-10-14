@@ -114,7 +114,16 @@ def history_for_plate(license_plate: str) -> list[dict]:
     """Return the service entries for one car, in saved order."""
     entries = []
     for entry in load_history():
-        if entry.get("license_plate") == license_plate:
+        if isinstance(entry, dict) and entry.get("license_plate") == license_plate:
+            entries.append(entry)
+    return entries
+
+
+def history_for_part(license_plate: str, part_name: str) -> list[dict]:
+    """Return all matching history entries in saved order, keeping their raw fields."""
+    entries = []
+    for entry in history_for_plate(license_plate):
+        if entry.get("part_name") == part_name:
             entries.append(entry)
     return entries
 

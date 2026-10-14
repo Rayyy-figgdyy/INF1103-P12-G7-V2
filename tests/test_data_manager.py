@@ -1006,3 +1006,10 @@ def test_kia_forte_manufacturer_schedule():
         "repeat_km": 39000,
         "repeat_months": 24,
     }
+
+def test_history_for_part_returns_only_matching_part():
+    with temp_data_files():
+        data_manager.add_service({**SERVICE, "part_name": "Brake Pads"})
+        data_manager.add_service({**SERVICE, "part_name": "Engine Oil"})
+        result = data_manager.history_for_part("SBA1234A", "Brake Pads")
+        assert len(result) == 1 and result[0]["part_name"] == "Brake Pads"
