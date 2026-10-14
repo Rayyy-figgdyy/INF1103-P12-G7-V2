@@ -295,7 +295,7 @@ COOLANT_RULE = {"interval_km": 200_000, "interval_months": 120, "action": "repla
 def test_first_interval_until_the_part_has_been_replaced():
     first = logic_manager.choose_interval(COOLANT_RULE, [])
     assert (first["interval_km"], first["interval_months"], first["interval_stage"]) == (200_000, 120, "first")
-    repeat = logic_manager.choose_interval(COOLANT_RULE, [{"part_name": "Coolant"}])
+    repeat = logic_manager.choose_interval(COOLANT_RULE, [{"part_name": "Coolant", "service_action": "replace"}])
     assert (repeat["interval_km"], repeat["interval_months"], repeat["interval_stage"]) == (40_000, 24, "repeat")
 
 
@@ -349,3 +349,25 @@ def test_combined_brake_urgency_uses_the_normal_score_and_route_pipeline():
     assert logic_manager.score(record) >= 80
     assert logic_manager.route(record) == "URGENT - Service immediately"
 
+
+
+def test_inspection_and_unknown_actions_keep_first_interval():
+    # Only a confirmed replacement activates the shorter repeat interval.
+    for action in ("inspect", "unknown", None):
+        history = [{"part_name": "Coolant", "service_action": action}]
+        result = logic_manager.choose_interval(COOLANT_RULE, history)
+        assert result["interval_stage"] == "first"
+        assert result["interval_km"] == 200_000
+
+
+def test_unknown_history_does_not_reset_replacement_schedule():
+    # An old entry with no action should not be mistaken for a coolant change.
+    history = [
+        {"part_name": "Coolant", "service_date": "01-01-2024",
+         "service_odometer": 20_000, "service_action": "unknown"},
+        {"part_name": "Coolant", "service_date": "01-01-2025",
+         "service_odometer": 40_000, "service_action": "replace"},
+    ]
+    last = logic_manager.latest_service(history, "Coolant", "replace")
+    assert last["service_odometer"] == 40_000
+    assert logic_manager.latest_service(history[:1], "Coolant", "replace") is None

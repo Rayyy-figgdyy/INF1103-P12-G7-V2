@@ -288,8 +288,8 @@ def sort_history(entries: list[dict]) -> list[dict]:
 
 def brake_history_context(entries: list[dict], model_year: int | None,
                           check_date: datetime.date, current_odometer: int) -> dict:
-    """Validate brake-pad replacements without calculating their service intervals.
-    The AI receives the valid replacement records later and calculates the pattern."""
+    """Check brake-pad history without calculating its replacement intervals.
+    AI later analyses the validated inspection and replacement records."""
     clean = []
     unreliable = None
     earliest = datetime.date(model_year, 1, 1) if model_year is not None else None
@@ -356,7 +356,9 @@ def latest_service(entries: list[dict], part_name: str,
                 and (model_year is None or service_date >= datetime.date(model_year, 1, 1))
                 and isinstance(odometer, int) and not isinstance(odometer, bool) and odometer >= 0):
             action = entry.get("service_action")
-            if scheduled_action is not None and action not in (None, "unknown", "replace", scheduled_action):
+            # Unknown legacy actions cannot prove an inspection or replacement.
+            # A confirmed replacement can also reset an inspection/rotation interval.
+            if scheduled_action is not None and action not in ("replace", scheduled_action):
                 continue
             return entry
     return None
@@ -532,8 +534,8 @@ def choose_interval(rule: dict, part_services: list[dict]) -> dict:
     chosen = {"interval_km": rule["interval_km"], "interval_months": rule["interval_months"],
               "action": rule.get("action", "replace"), "interval_stage": None}
     if "repeat_km" in rule:
-        # Keep legacy records usable, but an explicit inspection is not a replacement.
-        replacement_logged = any(service.get("service_action") in (None, "unknown", "replace")
+        # Inspections and unconfirmed legacy records do not start the repeat cycle.
+        replacement_logged = any(service.get("service_action") == "replace"
                                  for service in part_services)
         if replacement_logged:
             chosen["interval_km"] = rule["repeat_km"]
