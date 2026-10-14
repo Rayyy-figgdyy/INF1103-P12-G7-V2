@@ -348,9 +348,8 @@ def parse_response(reply: str | None) -> dict | None:
 # STEP 4: validate_response
 # ======================================================================
 
-def validate_response(data: dict | None) -> dict | None:
-    """C3: check the parsed answer against the schema before anything uses it.
-    Returns a clean copy with ai_status "ok", or None to reject it."""
+def validate_response(data: dict | None, expect_history: bool = False) -> dict | None:
+    """Validate one combined AI assessment before the rest of the app uses it."""
     if not isinstance(data, dict):
         return None
 
@@ -359,8 +358,7 @@ def validate_response(data: dict | None) -> dict | None:
             logger.error("AI response is missing %r: %s", key, data)
             return None
 
-    # urgency_score must be an int 1-10. 7.0 is accepted as 7; True/False are
-    # rejected explicitly because Python treats bool as a kind of int.
+    # urgency_score must be an int 1-10. A whole-number float is accepted.
     score = data["urgency_score"]
     if isinstance(score, float) and score.is_integer():
         score = int(score)
@@ -378,8 +376,7 @@ def validate_response(data: dict | None) -> dict | None:
             logger.error("AI response has an empty or invalid %r: %r", key, value)
             return None
 
-    # Only the expected keys are copied; any extra keys from the AI are dropped.
-    return {
+    answer = {
         "urgency_score": score,
         "confidence": data["confidence"],
         "overdue_summary": data["overdue_summary"],
@@ -387,6 +384,16 @@ def validate_response(data: dict | None) -> dict | None:
         "manual_reference": data["manual_reference"],
         "ai_status": "ok",
     }
+
+    # Eligible Brake Pad history is part of the same assessment, not a second score.
+    if expect_history:
+        pattern = data.get("history_pattern")
+        if not isinstance(pattern, str) or not pattern.strip():
+            logger.error("AI response is missing a valid brake history_pattern: %r", pattern)
+            return None
+        answer["history_pattern"] = pattern.strip()
+
+    return answer
 
 
 # ======================================================================
@@ -402,11 +409,15 @@ def process(record: dict, manual_path: str | None = None, client=None,
         client, backup_client = get_clients()
 
     prompt = build_prompt(record)
+    history = record.get("brake_pad_history")
+    expect_history = (record.get("part_name") == "Brake Pads"
+                      and isinstance(history, list) and len(history) >= 3)
 
     for attempt in range(1, max_attempts + 1):
         reply, who_answered = ask_ai(prompt, manual_path, client, backup_client,
                                      record.get("part_name", ""))
-        answer = validate_response(parse_response(reply))
+        parsed = parse_response(reply)
+        answer = validate_response(parsed, expect_history=expect_history)
 
         if answer is not None:
             answer["ai_provider"] = who_answered        # shown as "Answered by"

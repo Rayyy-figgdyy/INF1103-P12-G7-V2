@@ -21,6 +21,11 @@ GOOD = {
     "manual_reference": "Maintenance schedule, p. 7",
 }
 
+GOOD_HISTORY = {
+    **GOOD,
+    "history_pattern": "Previous replacements were 20,000 km and 21,000 km apart.",
+}
+
 RECORD = {"part_name": "Engine Oil", "car_model": "Toyota Corolla 2020", "current_odometer": 50_650}
 
 
@@ -119,6 +124,15 @@ def test_validate_accepts_whole_number_float_score():
     assert ai_manager.validate_response({**GOOD, "urgency_score": 7.0})["urgency_score"] == 7
 
 
+def test_validate_requires_history_pattern_for_combined_brake_assessment():
+    result = ai_manager.validate_response(GOOD_HISTORY, expect_history=True)
+    assert result["urgency_score"] == 7
+    assert result["history_pattern"].startswith("Previous replacements")
+    assert ai_manager.validate_response(GOOD, expect_history=True) is None
+    assert ai_manager.validate_response({**GOOD_HISTORY, "history_pattern": "  "},
+                                        expect_history=True) is None
+
+
 def test_validate_rejects_unknown_confidence_and_empty_text():
     assert ai_manager.validate_response({**GOOD, "confidence": "Very sure"}) is None
     assert ai_manager.validate_response({**GOOD, "overdue_summary": "  "}) is None
@@ -132,6 +146,24 @@ def test_process_merges_ai_fields_into_record():
     assert result["urgency_score"] == 7 and result["ai_status"] == "ok"
     assert result["part_name"] == "Engine Oil"  # original fields kept
     assert len(calls) == 1
+
+
+def test_process_keeps_one_combined_brake_urgency_result():
+    calls = []
+    brake_record = {
+        **RECORD,
+        "part_name": "Brake Pads",
+        "brake_pad_history": [
+            {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
+            {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
+            {"service_date": "01-01-2026", "service_odometer": 61000, "service_action": "replace"},
+        ],
+    }
+    result = ai_manager.process(brake_record, client=fake_client([json.dumps(GOOD_HISTORY)], calls))
+    assert result["urgency_score"] == 7
+    assert result["history_pattern"] == GOOD_HISTORY["history_pattern"]
+    assert "history_analysis" not in result
+    assert "manufacturer_assessment" not in result
 
 
 def test_process_retries_after_malformed_response():
