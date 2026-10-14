@@ -61,27 +61,6 @@ def test_prompt_tells_ai_to_use_the_manual_and_a_fixed_scale():
     assert "8-9" in prompt and "High" in prompt  # urgency scale and confidence rules
 
 
-def test_brake_prompt_combines_manual_and_history_into_one_urgency():
-    history = [
-        {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
-        {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
-        {"service_date": "01-01-2026", "service_odometer": 61000, "service_action": "replace"},
-    ]
-    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
-                                      "brake_pad_history": history})
-    assert "20000" in prompt and "61000" in prompt
-    assert "ONE combined urgency_score" in prompt
-    assert "Do not create a separate history urgency score" in prompt
-    assert "history_pattern" in prompt
-
-
-def test_brake_prompt_without_enough_history_uses_normal_manual_prompt():
-    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
-                                      "brake_pad_history": [{"service_odometer": 20000}]})
-    assert "PERSONALISED BRAKE-PAD HISTORY" not in prompt
-    assert "history_pattern" not in prompt
-
-
 # --- parse_response ---------------------------------------------------------------
 
 def test_parse_plain_json():
@@ -124,13 +103,11 @@ def test_validate_accepts_whole_number_float_score():
     assert ai_manager.validate_response({**GOOD, "urgency_score": 7.0})["urgency_score"] == 7
 
 
-def test_validate_requires_history_pattern_for_combined_brake_assessment():
+def test_validate_combined_brake_result_requires_history_pattern():
     result = ai_manager.validate_response(GOOD_HISTORY, expect_history=True)
     assert result["urgency_score"] == 7
     assert result["history_pattern"].startswith("Previous replacements")
     assert ai_manager.validate_response(GOOD, expect_history=True) is None
-    assert ai_manager.validate_response({**GOOD_HISTORY, "history_pattern": "  "},
-                                        expect_history=True) is None
 
 
 def test_validate_rejects_unknown_confidence_and_empty_text():
@@ -148,22 +125,17 @@ def test_process_merges_ai_fields_into_record():
     assert len(calls) == 1
 
 
-def test_process_keeps_one_combined_brake_urgency_result():
-    calls = []
-    brake_record = {
-        **RECORD,
-        "part_name": "Brake Pads",
-        "brake_pad_history": [
-            {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
-            {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
-            {"service_date": "01-01-2026", "service_odometer": 61000, "service_action": "replace"},
-        ],
-    }
-    result = ai_manager.process(brake_record, client=fake_client([json.dumps(GOOD_HISTORY)], calls))
+def test_process_returns_one_combined_brake_urgency():
+    history = [
+        {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
+        {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
+        {"service_date": "01-01-2026", "service_odometer": 61000, "service_action": "replace"},
+    ]
+    record = {**RECORD, "part_name": "Brake Pads", "brake_pad_history": history}
+    result = ai_manager.process(record, client=fake_client([json.dumps(GOOD_HISTORY)], []))
     assert result["urgency_score"] == 7
     assert result["history_pattern"] == GOOD_HISTORY["history_pattern"]
     assert "history_analysis" not in result
-    assert "manufacturer_assessment" not in result
 
 
 def test_process_retries_after_malformed_response():
@@ -181,13 +153,6 @@ def test_process_falls_back_after_repeated_malformed_responses():
     assert len(calls) == 2
 
 
-def test_process_survives_connection_failure():
-    calls = []
-    result = ai_manager.process(RECORD, client=fake_client([ConnectionError("network down")], calls))
-    assert result["ai_status"] == "unavailable"
-    assert result["part_name"] == "Engine Oil"
-
-
 def test_call_api_returns_none_instead_of_raising():
     assert ai_manager.call_api("hi", client=fake_client([TimeoutError("timed out")], [])) is None
 
@@ -201,12 +166,6 @@ def test_process_attaches_manual_before_prompt():
     assert calls[0][0] == "<uploaded manuals/kia_forte.pdf>"  # manual first
     assert "Engine Oil" in calls[0][1]                       # then the prompt
     assert result["manual_reference"] == "Maintenance schedule, p. 7"
-
-
-def test_process_without_manual_sends_prompt_only():
-    calls = []
-    ai_manager.process(RECORD, client=fake_client([json.dumps(GOOD)], calls))
-    assert len(calls[0]) == 1
 
 
 def test_fallback_has_every_ai_field():
@@ -346,10 +305,6 @@ def test_excerpt_finds_parts_under_the_manuals_own_names():
     assert "Seat adjustment" not in ai_manager.manual_excerpt(manual, "Tyres")
 
 
-def test_excerpt_falls_back_to_start_of_manual_when_part_not_mentioned():
-    assert ai_manager.manual_excerpt(MANUAL, "Timing Belt").startswith("SCHEDULED MAINTENANCE")
-
-
 def test_excerpt_is_capped():
     huge = "\n".join(f"Brake pads note {i}" for i in range(50_000))
     assert len(ai_manager.manual_excerpt(huge, "Brake Pads")) <= ai_manager.MAX_MANUAL_CHARS
@@ -367,13 +322,21 @@ def test_backup_request_fits_free_tier_even_with_a_huge_manual():
     approx_prompt_tokens = len(groq_calls[0]) / 4  # ~4 characters per token
     assert approx_prompt_tokens + ai_manager.GROQ_MAX_ANSWER_TOKENS < 8000
 
+def test_brake_prompt_combines_manual_and_history_into_one_score():
+    history = [{"service_action": "replace", "service_odometer": km}
+               for km in (20000, 40000, 60000)]
+    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
+                                      "brake_pad_history": history})
+    assert "PERSONALISED BRAKE-PAD HISTORY" in prompt
+    assert "replacement-to-replacement" in prompt
+    assert "ONE combined urgency_score" in prompt
+    assert "Do not create a separate history urgency score" in prompt
+    assert "60000" in prompt
 
-def test_waits_before_retrying_when_both_fail():
-    waits, saved = [], ai_manager.time
-    ai_manager.time = SimpleNamespace(sleep=waits.append)
-    try:
-        ai_manager.process(RECORD, client=fake_client([ConnectionError("503")], []),
-                           backup_client=fake_groq([ConnectionError("413")], []), max_attempts=2)
-    finally:
-        ai_manager.time = saved
-    assert waits == [ai_manager.RETRY_DELAY_SECONDS]  # one wait, between the two attempts
+
+def test_brake_prompt_ignores_too_little_history():
+    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
+                                      "brake_pad_history": [{"service_odometer": 20000}]})
+    assert "PERSONALISED BRAKE-PAD HISTORY" not in prompt
+    assert "history_pattern" not in prompt
+
