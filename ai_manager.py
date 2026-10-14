@@ -106,14 +106,12 @@ def get_clients() -> tuple:
 # ======================================================================
 
 def build_prompt(record: dict) -> str:
-    """Build the prompt for one maintenance check from the record's details.
-    Returns the prompt text (fixed 1-10 scale, JSON-only reply requested)."""
+    """Build one AI prompt using the manual baseline and any eligible brake history."""
     # The fixed urgency scale lines up with the thresholds in logic_manager.route.
-    # C3: the reply format below must match REQUIRED_KEYS.
-    return (
+    prompt = (
         "You are an automotive maintenance advisor in Singapore. The owner's "
-        "manual for this car is attached. Using that manual as your main "
-        "source, assess how urgently one part needs servicing.\n\n"
+        "manual for this car is attached. Use the manual as the authoritative "
+        "maintenance baseline and assess how urgently one part needs servicing.\n\n"
         "VEHICLE\n"
         f"- Model: {record.get('car_model')}\n"
         f"- Condition when bought: {record.get('car_condition')}\n"
@@ -154,7 +152,25 @@ def build_prompt(record: dict) -> str:
         "   Medium  the manual only covers it indirectly (e.g. 'inspect' not "
         "'replace'), or disagrees with our stored normal schedule\n"
         "   Low     the manual does not cover this part; you used general knowledge\n\n"
-        "Reply with ONLY one JSON object, exactly these keys:\n"
+    )
+
+    history = record.get("brake_pad_history")
+    if record.get("part_name") == "Brake Pads" and isinstance(history, list) and len(history) >= 3:
+        prompt += (
+            "PERSONALISED BRAKE-PAD HISTORY\n"
+            f"- Confirmed replacement records: {json.dumps(history, ensure_ascii=False)}\n"
+            "- These records were already validated by the program. Calculate the "
+            "replacement-to-replacement mileage intervals yourself.\n"
+            "- Use the manual baseline AND this car's replacement pattern together to create "
+            "ONE combined urgency_score. Do not create a separate history urgency score.\n"
+            "- The manual remains authoritative. The history may add personalised context, "
+            "but it must never be used to delay or ignore a manufacturer-required inspection "
+            "or service.\n"
+            "- Do not infer driving style, brake-pad thickness, or guaranteed remaining life.\n\n"
+        )
+
+    prompt += (
+        "Reply with ONLY one JSON object with these required keys:\n"
         "{\n"
         '  "urgency_score": <integer 1-10>,\n'
         '  "confidence": <"High", "Medium" or "Low">,\n'
@@ -162,9 +178,12 @@ def build_prompt(record: dict) -> str:
         'or "Tyres: 12 days overdue" or "Air filter: 3,000 km remaining">,\n'
         '  "recommended_action": <one short sentence telling the owner what to do next>,\n'
         '  "manual_reference": <where in the manual you found this, e.g. '
-        '"Maintenance schedule, p. 7", or "Not covered in manual">\n'
-        "}"
+        '"Maintenance schedule, p. 7", or "Not covered in manual">'
     )
+    if record.get("part_name") == "Brake Pads" and isinstance(history, list) and len(history) >= 3:
+        prompt += ',\n  "history_pattern": <one short sentence describing the calculated replacement intervals>'
+    prompt += "\n}"
+    return prompt
 
 
 # ======================================================================

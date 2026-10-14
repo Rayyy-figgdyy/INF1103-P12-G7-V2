@@ -56,6 +56,27 @@ def test_prompt_tells_ai_to_use_the_manual_and_a_fixed_scale():
     assert "8-9" in prompt and "High" in prompt  # urgency scale and confidence rules
 
 
+def test_brake_prompt_combines_manual_and_history_into_one_urgency():
+    history = [
+        {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
+        {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
+        {"service_date": "01-01-2026", "service_odometer": 61000, "service_action": "replace"},
+    ]
+    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
+                                      "brake_pad_history": history})
+    assert "20000" in prompt and "61000" in prompt
+    assert "ONE combined urgency_score" in prompt
+    assert "Do not create a separate history urgency score" in prompt
+    assert "history_pattern" in prompt
+
+
+def test_brake_prompt_without_enough_history_uses_normal_manual_prompt():
+    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
+                                      "brake_pad_history": [{"service_odometer": 20000}]})
+    assert "PERSONALISED BRAKE-PAD HISTORY" not in prompt
+    assert "history_pattern" not in prompt
+
+
 # --- parse_response ---------------------------------------------------------------
 
 def test_parse_plain_json():
