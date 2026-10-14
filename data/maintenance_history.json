@@ -46,5 +46,48 @@
     "service_odometer": 25000,
     "notes": "",
     "service_id": 6
+  },
+  {
+    "license_plate": "SON369C",
+    "part_name": "Brake Pads",
+    "service_date": "15-07-1945",
+    "service_odometer": 90,
+    "notes": "",
+    "service_id": 7
+  },
+  {
+    "license_plate": "SKA2130P",
+    "part_name": "Brake Pads",
+    "service_date": "12-05-2024",
+    "service_odometer": 0,
+    "notes": "",
+    "service_id": 8
+  },
+  {
+    "license_plate": "SKA2130P",
+    "part_name": "Brake Pads",
+    "service_action": "replace",
+    "service_date": "21-05-2024",
+    "service_odometer": 0,
+    "notes": "",
+    "service_id": 9
+  },
+  {
+    "license_plate": "SKA2130P",
+    "part_name": "Brake Pads",
+    "service_action": "replace",
+    "service_date": "09-12-2024",
+    "service_odometer": 70000,
+    "notes": "",
+    "service_id": 10
+  },
+  {
+    "license_plate": "SKA2130P",
+    "part_name": "Brake Pads",
+    "service_action": "replace",
+    "service_date": "12-08-2025",
+    "service_odometer": 150000,
+    "notes": "",
+    "service_id": 11
   }
 ]

@@ -1,10 +1,23 @@
 [
-  
   {
     "name": "Jason Tan",
     "license_plate": "SMZ2020K",
     "car_model": "Mazda 3 Hatchback 2020",
     "car_condition": "Used",
     "coe_expiry_date": "15-06-2030"
+  },
+  {
+    "name": "Rayson",
+    "license_plate": "SON369C",
+    "car_model": "Honda Civic 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "15-07-2036"
+  },
+  {
+    "name": "Rayson (Test 2)",
+    "license_plate": "SKA2130P",
+    "car_model": "Kia Forte",
+    "car_condition": "Used",
+    "coe_expiry_date": "20-08-2032"
   }
 ]
