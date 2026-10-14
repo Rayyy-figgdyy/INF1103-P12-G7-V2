@@ -348,6 +348,38 @@ def latest_service_for_check(user: dict, part_name: str, interval: dict) -> tupl
     return history, model_year, last_service
 
 
+# Ask the owner what was actually performed in one old maintenance record.
+# Legacy entries remain unchanged until the user explicitly confirms an action.
+def confirm_legacy_action(user: dict, part_name: str, history: list[dict]) -> bool:
+    unknown = [
+        entry for entry in history
+        if entry.get("part_name") == part_name
+        and entry.get("service_action") in (None, "unknown")
+    ]
+    if not unknown:
+        return False
+
+    io_manager.display_message(
+        "\nSome older services have no recorded action (inspect/replace/rotate). "
+        "Please confirm one using your workshop record."
+    )
+    if not io_manager.confirm_action("Confirm an older service action now?"):
+        return False
+
+    # Reuse the existing service-selection and action menus (IO stays in io_manager).
+    selected = io_manager.prompt_service_choice(unknown, "confirm")
+    if selected is None:
+        return False
+    action = io_manager.prompt_service_action(part_name)
+    updated = dict(selected)
+    updated["service_action"] = action
+    if not data_manager.update_service(updated):
+        io_manager.display_message("Could not save the confirmed action.")
+        return False
+    io_manager.display_message("Old maintenance action confirmed and saved.")
+    return True
+
+
 # Get a usable last service, asking the user to add one when needed.
 def resolve_last_service(user: dict, part_name: str, interval: dict) -> tuple | None:
     history, model_year, last_service = latest_service_for_check(
@@ -359,8 +391,17 @@ def resolve_last_service(user: dict, part_name: str, interval: dict) -> tuple | 
     if last_service is not None:
         return last_service, history, model_year, from_new
 
+    # An older history entry may be present but have no confirmed service action.
+    # Allow the owner to correct that entry rather than discarding their history.
+    if confirm_legacy_action(user, part_name, history):
+        history, model_year, last_service = latest_service_for_check(
+            user, part_name, interval
+        )
+        if last_service is not None:
+            return last_service, history, model_year, from_new
+
     io_manager.display_message(
-        f"\nThere is no {part_name} service in your maintenance history yet."
+        f"\nThere is no confirmed {part_name} service that resets this interval yet."
     )
 
     # Parts with a first/repeat rule can start from the car being new.
@@ -548,10 +589,14 @@ def urgent_flow(user: dict) -> None:
         lambda record: record.get("license_plate") == plate
     )
 
-    # Older outcomes for the same part should not stay in the urgent list.
+    # New relevant servicing makes a previous warning outdated, even if no fresh
+    # AI check has been run yet. Keep the old check in JSON history for reference.
+    history = data_manager.history_for_plate(plate)
     urgent_records = []
     for record in logic_manager.latest_check_per_part(saved_checks):
-        if logic_manager.is_urgent(record):  # Keep only outcomes requiring attention.
+        if logic_manager.is_check_superseded(record, history):
+            continue  # The user must run a new check after servicing.
+        if logic_manager.is_urgent(record):
             urgent_records.append(record)
 
     # Highest-risk items appear first for quicker attention.

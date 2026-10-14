@@ -44,7 +44,7 @@ REPEAT_FIELDS = (
     "last_service_action",
     "current_odometer",
     "check_date",
-    "interval_km",
+    "intervalg_km",
     "interval_months",
     "action",
     "interval_stage",
@@ -90,16 +90,33 @@ def read_list(path: str) -> list[dict]:
 
 
 def write_list(path: str, items: list[dict]) -> bool:
-    """Overwrite a file with the whole list, creating data/ if needed.
-    Returns True on success, False if writing failed (the error is logged)."""
+    """Safely replace a JSON list, refusing to overwrite corrupt existing data.
+    The temporary file keeps the original intact if a write fails halfway."""
+    temporary_path = path + ".tmp"
     try:
+        # Missing files are normal, but a damaged EXISTING file must be protected.
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as existing_file:
+                existing_data = json.load(existing_file)
+            if not isinstance(existing_data, list):
+                logger.error("Refusing to overwrite %s: expected a JSON list.", path)
+                return False
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as file:
+        with open(temporary_path, "w", encoding="utf-8") as file:
             json.dump(items, file, indent=2)
+        os.replace(temporary_path, path)  # Replace only after a complete write.
         return True
-    except OSError as error:
-        logger.error("Could not write %s: %s", path, error)
+    except (OSError, json.JSONDecodeError, UnicodeError) as error:
+        logger.error("Refusing to overwrite %s because it is unreadable or corrupt: %s", path, error)
         return False
+    finally:
+        # Remove a partial temporary file, never the original data file.
+        if os.path.exists(temporary_path):
+            try:
+                os.remove(temporary_path)
+            except OSError:
+                pass
 
 
 # ======================================================================

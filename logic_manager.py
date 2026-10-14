@@ -1,46 +1,42 @@
 """
-logic_manager.py - the business rules/logic layer
+logic_manager.py -- the business rules (Logic layer).
 
-Takes one maintenance check that the AI has already scored and applies business rules:
+Takes one maintenance check that the AI has already scored and applies our rules:
   - evaluate(): the facts (overdue by km OR time, km/day, COE days left, service-by date)
   - score():    a 0-100 risk score, used only to sort the urgent list
   - route():    the final outcome text; includes the urgency + confidence rule
-
-It also looks after the maintenance history: finding the latest servicing of each
-part, making sure odometer readings never go backwards (business rule 1), and
-finding the latest check for each part.
-
-Brake pads and tyres are safety-critical, and the COE rules follow how
-COEs work in Singapore. Sll the dates, distances and overdue amounts are worked out
-here ourselves instead of leaving them to the AI. The one exception is the brake
-pad history: we check the records here, then the AI works out the replacement
-pattern from them. This file never prints anything, calls the AI or opens the
-data files.
+Rules held here: overdue = whichever limit comes first, brake pads and tyres are
+safety-critical, the "service by" date (business rule 3) and the Singapore COE rules.
+It also holds the rules for the maintenance history: which service is the latest for
+a part, odometer readings that must go up over time (business rule 1), and which AI
+check is the latest one for each part.
+All arithmetic is done here, not by the AI. No screen, AI or file access.
 """
-import datetime    
+import datetime    # Python's built-in tools for dates
 
 # ======================================================================
-# GLOBAL VARIABLES (Can update if required)
+# FIXED SETTINGS
 # ======================================================================
 
-# Safety critical parts that get extra urgency
+# A failure of these parts is a safety risk (stopping and grip), so they get extra
+# urgency below. Lower case so they match part names after .lower().
 SAFETY_CRITICAL_PARTS = ("brake pads", "tyres")
 
 DAYS_PER_MONTH = 30.44           # average days in a month (so 24 months = 731 days)
 COE_DEFER_WINDOW_DAYS = 180      # "COE ends soon" = within 180 days (about 6 months)
 
-# Plausibility for odometer input; even heavy drivers unlikely to drive past this amount, 
-# so any input past this amount is considered an error
+# Plausibility limit for odometer readings: even a hard-driven car can't cover more
+# than this many km a day on average, so a bigger jump is treated as a typing mistake.
 MAX_KM_PER_DAY = 2_000
 
-#COE Validation (Not more than 10 years expiry from previous date)
+# A Singapore COE lasts 10 years, so a COE can't expire more than 10 years from today.
 COE_MAX_YEARS = 10
 
 # What each stored action is called in the outcome text of rule 5 below.
 OVERDUE_WORDING = {"replace": "part", "inspect": "inspection", "rotate": "tyre rotation"}
 
-# Outcomes for the owner's action: any outcome starting with one of these
-# is in the urgent list (menu option 6)
+# Outcomes that need the owner's attention: any outcome starting with one of these
+# is listed in menu option 3.
 URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED", "NEEDS MANUAL REVIEW")
 
 
@@ -49,8 +45,8 @@ URGENT_PREFIXES = ("URGENT", "FLAGGED", "DUE SOON", "COE EXPIRED", "NEEDS MANUAL
 # ======================================================================
 
 def to_date(value) -> datetime.date | None:
-    """Turn saved text into real date.
-    Returns None if the value is missing or not a valid date."""
+    """Turn saved text like '03-09-2025' into a date.
+    Returns None if the value is missing or isn't a valid date."""
     try:
         return datetime.datetime.strptime(str(value), "%d-%m-%Y").date()
     except (TypeError, ValueError):
@@ -65,16 +61,16 @@ def add_days(start: datetime.date, days: int) -> datetime.date:
 def recommend_service_date(check_date: datetime.date, is_overdue: bool,
                             km_left: int | None, days_left: int | None,
                             km_per_day: float, urgency: int | None,
-                            safety_critical: bool) -> datetime.date:
-    """BUSINESS RULE 3: works out the date a part should be serviced by.
+                            safety_critical: bool) -> datetime.date | None:
+    """BUSINESS RULE 3: work out the "service by" date for one part.
     Starts from the schedule's due date, then brings it forward if the AI's
-    urgency is high. Returns a recommended date"""
-    # ---- Part A: When the schedule is due by----
+    urgency is high. Returns the recommended date."""
+    # ---- Part A: the schedule's due date ----
     if is_overdue:
         due = check_date
     else:
-        # Due when either time limit runs out or KM limit at the rate the driver drives.
-        # int() will round down so the date will recommend early rather than late
+        # Due when EITHER limit runs out: the time limit, or the km limit reached at
+        # the owner's own driving pace. int() rounds down, so we never recommend late.
         possible_dates = []
         if days_left is not None:
             possible_dates.append(add_days(check_date, days_left))
@@ -84,25 +80,27 @@ def recommend_service_date(check_date: datetime.date, is_overdue: bool,
         if possible_dates:
             due = min(possible_dates)       # min = the earliest date
         else:
-            due = check_date
+            # A mileage-only interval needs a measured driving pace for a date estimate.
+            # Do not incorrectly say "service today" when no estimate is possible.
+            due = None
 
-    # ---- Part B: High AI urgency can bring it forward ----
-    # Urgency 8-10: within 3 days. Urgency 5-7: within 14 days. 1-4: date from part A.
+    # ---- Part B: the AI's urgency can bring it forward ----
+    # Urgency 8-10: within 3 days. Urgency 5-7: within 14 days. 1-4: keep Part A.
     if urgency is not None and urgency >= 8:
         days_allowed = 3
     elif urgency is not None and urgency >= 5:
         days_allowed = 14
     else:
-        days_allowed = None                 # low urgency: stick with part A date
+        days_allowed = None                 # low urgency: keep the schedule's date
 
     if days_allowed is not None:
         if safety_critical:
             # Brake pads and tyres get half the time (3 -> 1 day, 14 -> 7 days),
             # never less than 1 day.
             days_allowed = max(1, days_allowed // 2)
-        # min(): Taking the earlier date means urgency can only bring date forward but never
-        # push it back
-        due = min(due, add_days(check_date, days_allowed))
+        # min(): urgency can only bring the date forward, never push it later.
+        urgent_date = add_days(check_date, days_allowed)
+        due = min(due, urgent_date) if due is not None else urgent_date
 
     return due
 
@@ -112,31 +110,30 @@ def recommend_service_date(check_date: datetime.date, is_overdue: bool,
 # ======================================================================
 
 def evaluate(record: dict) -> dict:
-    """Work out the facts about one check: km and days since the last service,
-    whether it's overdue, how far the owner drives a day, whether it's a
-    safety-critical part, days left on the COE, and the service-by date.
-    These come back as a new dictionary; the record itself isn't changed."""
+    """Work out the facts about one check: km/days since service, overdue status,
+    km per day, safety-critical, COE days left and the "service by" date.
+    Returns a NEW dictionary of these facts; the record itself isn't changed."""
 
     # ---- The dates ----
-    # No check date means using todays date; missing last-service date means 0 days since service.
+    # Missing check date -> today; missing last-service date -> 0 days since service.
     check_date = to_date(record.get("check_date")) or datetime.date.today()
     last_service_date = to_date(record.get("last_service_date")) or check_date
 
     # ---- The stored schedule (business rule 2) ----
-    # Intervals always come from our schedules in car.json, never from the AI.
+    # Intervals always come from our stored schedule (cars.json), never from the AI.
     interval_km = int(record.get("interval_km") or 0)
     interval_days = round((record.get("interval_months") or 0) * DAYS_PER_MONTH)
 
     # ---- How far, and how long, since the last service ----
-    # max(0, ...) stops invalid data such as negative from going through
+    # max(0, ...) guards against bad data giving negative distances or days.
     odometer_now = int(record.get("current_odometer") or 0)
     odometer_at_service = int(record.get("last_service_mileage") or 0)
     km_since = max(0, odometer_now - odometer_at_service)
     days_since = max(0, (check_date - last_service_date).days)
 
     # ---- Is it overdue? (by distance, by time, or both) ----
-    # Manual says overdue when "10,000 km or 12 months" so reaching either limit works
-    #  A limit of 0 means the part has no such limit in the manual.
+    # Overdue when EITHER limit is reached ("10,000 km or 12 months, whichever comes
+    # first", as manuals put it). A limit of 0 means the part has no such limit.
     overdue_by_km = interval_km > 0 and km_since >= interval_km
     overdue_by_time = interval_days > 0 and days_since >= interval_days
     is_overdue = overdue_by_km or overdue_by_time
@@ -159,13 +156,13 @@ def evaluate(record: dict) -> dict:
     if days_since > 0:
         km_per_day = km_since / days_since
     else:
-        km_per_day = 0.0                    # serviced today: nothing to measure yet
+        km_per_day = 0.0                    # serviced today: no pace to measure yet
 
-    # ---- Is it a safety-critical part? ----
+    # ---- Is it a safety-critical part (brake pads or tyres)? ----
     part = str(record.get("part_name", "")).strip().lower()
     safety_critical = part in SAFETY_CRITICAL_PARTS
 
-    # ---- Days until COE expires (negative means already expired) ----
+    # ---- Days until the COE expires (a negative number = already expired) ----
     coe_date = to_date(record.get("coe_expiry_date"))
     if coe_date is not None:
         coe_days_left = (coe_date - check_date).days
@@ -183,20 +180,21 @@ def evaluate(record: dict) -> dict:
         "days_overdue": days_overdue,
         "is_overdue": is_overdue,
         "is_safety_critical": safety_critical,
-        "km_per_day": round(km_per_day, 1),          # rounded to 1 decimal place
+        "km_per_day": round(km_per_day, 1),          # 1 decimal place
         "coe_days_left": coe_days_left,
-        "recommended_service_date": service_by.strftime("%d-%m-%Y"),
+        # "N/A" is clearer than inventing today's date without driving evidence.
+        "recommended_service_date": service_by.strftime("%d-%m-%Y") if service_by else "N/A",
     }
 
 
 # ======================================================================
-# score -- a number from 0 to 100 for sorting urgent list
+# score -- a number from 0 to 100, used to sort the urgent list
 # ======================================================================
 
 def score(record: dict) -> int:
-    """Give one check a risk score from 0 to 100.
-   Only used to put the most serious items at the top of the urgent list;
-    Never changes outcome. A check with no AI urgency scores 0 """
+    """Return the risk score (0-100) for one check.
+    Used only to sort the urgent list, most serious first; it never changes
+    a decision. Returns 0 if the AI gave no urgency score."""
     urgency = record.get("urgency_score")
     if urgency is None:
         return 0
@@ -208,7 +206,7 @@ def score(record: dict) -> int:
         total = total + 15
     if facts["is_safety_critical"]:
         total = total + 10
-    return min(100, total)        # never more than 100
+    return min(100, total)        # min(100, ...) caps it at 100
 
 
 # ======================================================================
@@ -218,12 +216,12 @@ def score(record: dict) -> int:
 def route(record: dict) -> str:
     """Decide the final outcome for one check and return it as text,
     e.g. "URGENT - Service immediately"."""
-    # The rules are checked top to bottom and the first match wins (each `return`
+    # The rules are checked top to bottom and the FIRST match wins (each `return`
     # ends the function), so the most serious rules must come first.
     urgency = record.get("urgency_score")
     confidence = record.get("confidence")
 
-    # Rule 1. No usable answer from AI: none of the AI-based rules below apply.
+    # Rule 1. No valid AI answer: none of the AI-based rules below can be trusted.
     if record.get("ai_status") != "ok" or urgency is None:
         return "NEEDS MANUAL REVIEW - AI assessment unavailable"
 
@@ -231,33 +229,34 @@ def route(record: dict) -> str:
     coe_days_left = facts["coe_days_left"]
 
     # Rule 2. Singapore: an expired COE means the car can't legally be driven,
-    # No point servicing until the COE is renewed.
+    # so servicing advice is pointless until the COE is renewed.
     if coe_days_left is not None and coe_days_left < 0:
         return "COE EXPIRED - Renew the COE or deregister before servicing"
 
-    # Rules 3 and 4. Our multi condition rule: which looks at both AI urgency score
-    # AND its confidence. A high score is only acted on directly when the AI is sure;
-    # otherwise a mechanic should confirm it.
+    # Rules 3 and 4. MULTI-CONDITION RULE (required by the brief): combines the AI's
+    # urgency AND its confidence. A high score is only acted on directly when the
+    # AI is sure; otherwise a mechanic should confirm it.
     if urgency >= 8 and confidence == "High":
         return "URGENT - Service immediately"
     if urgency >= 8:
         return "FLAGGED - High urgency but low AI confidence, verify with a mechanic"
 
-    # Rule 5.  Safety net: overdue brake pads or tyres are always urgent, even if the
-    # AI gave them a low score. The wording follows what the manual says to do, so an
-    # overdue brake inspection isn't made to sound like the pads must be replaced.
+    # Rule 5. Safety net: overdue brake pads or tyres are ALWAYS urgent, even if the
+    # AI's urgency is low.
+    # The wording follows the manual's action, so an overdue brake INSPECTION isn't
+    # reported as if the pads themselves must be replaced.
     if facts["is_safety_critical"] and facts["is_overdue"]:
         what = OVERDUE_WORDING.get(record.get("action"), "part")
         return f"URGENT - Safety-critical {what} overdue"
 
-    # Rule 6. COE defer rule: If COE is ending soon, part isn't safety critical, AND
-    # urgency is 4 or less, recommends user to wait as servicing may not be worth
+    # Rule 6. COE defer rule: COE ends within 180 days AND not a safety part AND
+    # urgency 4 or less -> the service can wait (the car may soon be off the road).
     coe_ends_soon = coe_days_left is not None and coe_days_left <= COE_DEFER_WINDOW_DAYS
     if coe_ends_soon and not facts["is_safety_critical"] and urgency <= 4:
         return "DEFER - COE expires soon, non-critical service can wait"
 
-    # Rules 7 to 9. Anything left: overdue is DUE SOON, urgency 1-3 is OK, and
-    # urgency 4-7 is MONITOR.
+    # Rules 7 to 9. Everything else: overdue -> DUE SOON, urgency 1-3 -> OK,
+    # urgency 4-7 -> MONITOR.
     if facts["is_overdue"]:
         return "DUE SOON - Overdue by manufacturer schedule"
     if urgency <= 3:
@@ -277,8 +276,8 @@ def is_urgent(record: dict) -> bool:
 # ======================================================================
 
 def service_sort_key(entry: dict) -> tuple:
-    """Sorts service entries by: date, then odometer. A Broken
-    date goes to the very start, so it's never picked as the latest service."""
+    """Sort key for a service entry: (date, odometer). Entries with a damaged date
+    sort first, so they are never picked as the latest service."""
     date = to_date(entry.get("service_date")) or datetime.date.min
     odometer = entry.get("service_odometer")
     if not isinstance(odometer, int):
@@ -287,16 +286,14 @@ def service_sort_key(entry: dict) -> tuple:
 
 
 def sort_history(entries: list[dict]) -> list[dict]:
-    """Return the service entries by newest first (by date, then odometer)."""
+    """Return the service entries newest first (by date, then odometer)."""
     return sorted(entries, key=service_sort_key, reverse=True)
 
 
 def brake_history_context(entries: list[dict], model_year: int | None,
                           check_date: datetime.date, current_odometer: int) -> dict:
-    """Check whether the car's brake pad history is reliable enough to show the AI.
-    We don't calculate the gaps between replacements here; we only make sure the
-    records make sense. If there are at least 3 separate confirmed replacements and
-    nothing looks wrong, the AI gets those replacements and works out the pattern"""
+    """Check brake-pad history without calculating its replacement intervals.
+    AI later analyses the validated inspection and replacement records."""
     clean = []
     unreliable = None
     earliest = datetime.date(model_year, 1, 1) if model_year is not None else None
@@ -353,9 +350,8 @@ def brake_history_context(entries: list[dict], model_year: int | None,
 def latest_service(entries: list[dict], part_name: str,
                    scheduled_action: str | None = None,
                    model_year: int | None = None) -> dict | None:
-    """Finds most recent service of the part that an urgency check can be based on.
-    Returns None if there isn't a service date. Invalid entries (future date, broken odometer)
-    are skipped. If scheduled_action is given, only that action or replacement counts"""
+    """Return the most recent service of this part, or None if it has never been
+    logged. This is the "last service" that an urgency check is based on."""
     for entry in sort_history(entries):
         service_date = to_date(entry.get("service_date"))
         odometer = entry.get("service_odometer")
@@ -374,10 +370,10 @@ def latest_service(entries: list[dict], part_name: str,
 
 def check_service_odometer(entries: list[dict], service_date: str, odometer: int,
                            ignore_id: int | None = None) -> str | None:
-    """BUSINESS RULE 1 for the history: an odometer only goes up, so a later service
-    can't show fewer km than an earlier one. Every part counts, because the odometer
-    belongs to the whole car. ignore_id skips the entry being edited.
-    Gives back a message explaining the problem, or None if the reading fits."""
+    """BUSINESS RULE 1 for the history: an odometer only goes up, so a service on a
+    later date can't show fewer km than one on an earlier date (any part counts, as
+    the odometer belongs to the whole car). ignore_id skips the entry being edited.
+    Returns a message explaining the clash, or None if the reading is consistent."""
     new_date = to_date(service_date)
     if new_date is None:
         return "The service date is not a valid date."
@@ -408,8 +404,50 @@ def latest_check_per_part(records: list[dict]) -> list[dict]:
     return list(newest.values())
 
 
+def is_check_superseded(record: dict, history: list[dict]) -> bool:
+    """True when a newer relevant maintenance action makes an old check outdated.
+    Compare service dates AND odometers so we do not hide unrelated old checks.
+    An inspection does not reset a manufacturer's replacement schedule."""
+    baseline_date = to_date(record.get("last_service_date"))
+    baseline_km = record.get("last_service_mileage")
+    if baseline_date is None or not isinstance(baseline_km, int):
+        return False
+
+    # A check tied to a particular service ID is stale if that entry was edited
+    # or deleted. This also catches changes that do not increase the odometer.
+    service_id = record.get("service_id")
+    if service_id is not None:
+        matching = next((item for item in history
+                         if item.get("service_id") == service_id), None)
+        if matching is None:
+            return True
+        if (matching.get("service_date") != record.get("last_service_date")
+                or matching.get("service_odometer") != baseline_km
+                or (matching.get("service_action") or "unknown") !=
+                (record.get("last_service_action") or "unknown")):
+            return True
+
+    required_action = record.get("action", "replace")
+    for service in history:
+        if service.get("part_name") != record.get("part_name"):
+            continue
+        action = service.get("service_action")
+        # A confirmed replacement also satisfies a scheduled inspection.
+        if action not in ("replace", required_action):
+            continue
+        service_date = to_date(service.get("service_date"))
+        service_km = service.get("service_odometer")
+        if service_date is None or not isinstance(service_km, int):
+            continue
+        if service_date > baseline_date or (
+            service_date == baseline_date and service_km > baseline_km
+        ):
+            return True
+    return False
+
+
 def latest_check_for_service(records: list[dict], entry: dict) -> dict | None:
-    """Finds the newest AI check that was based on this service entry (same part,
+    """Return the newest AI check that was based on this service entry (same part,
     service date and odometer), or None if that service hasn't been checked yet."""
     found = None
     for record in records:
@@ -426,7 +464,7 @@ def latest_check_for_service(records: list[dict], entry: dict) -> dict | None:
 # ======================================================================
 
 def add_years(start: datetime.date, years: int) -> datetime.date:
-    """Returns the same day `years` years later (29 Feb becomes 28 Feb if needed)."""
+    """Return the same day `years` years later (29 Feb becomes 28 Feb if needed)."""
     try:
         return start.replace(year=start.year + years)
     except ValueError:                  # 29 Feb in a year that isn't a leap year
@@ -434,19 +472,18 @@ def add_years(start: datetime.date, years: int) -> datetime.date:
 
 
 def coe_date_range(model_year: int | None, today: datetime.date) -> tuple:
-    """The range of COE expiry dates that make sense for a car: no earlier than
-    1 January of its model year, and no more than COE_MAX_YEARS from today. A date
-    that has already passed is fine, because our rules handle an expired COE.
-    Gives back (earliest, latest); earliest is None if we don't know the model year."""
+    """The COE expiry dates that make sense for a car: not before 1 January of its
+    model year (an expired COE is allowed, our rules act on it), and not more than
+    COE_MAX_YEARS from today. Returns (earliest, latest); earliest is None if the
+    model year is unknown."""
     earliest = datetime.date(model_year, 1, 1) if model_year else None
     return earliest, add_years(today, COE_MAX_YEARS)
 
 
 def km_pace_problem(from_date, from_km: int, to_date, to_km: int) -> str | None:
-    """Check the odometer didn't go up by more than MAX_KM_PER_DAY a day between two
-    readings (two readings on the same day count as 1 day apart). The dates can be
-    date objects or saved 'DD-MM-YYYY' text. Gives back a message if the jump is
-    impossible, or None if it's fine."""
+    """Check the odometer didn't grow by more than MAX_KM_PER_DAY a day between two
+    readings (a same-day pair counts as 1 day). Dates may be date objects or saved
+    'DD-MM-YYYY' text. Returns a message if the jump is impossible, else None."""
     start, end = to_date_any(from_date), to_date_any(to_date)
     if start is None or end is None or to_km <= from_km:
         return None                     # nothing to compare, or no growth at all
@@ -458,8 +495,7 @@ def km_pace_problem(from_date, from_km: int, to_date, to_km: int) -> str | None:
 
 
 def to_date_any(value) -> datetime.date | None:
-    """Accepts either a date object or saved 'DD-MM-YYYY' text; returns a date or None if 
-        date is not valid."""
+    """Accept a date object or saved 'DD-MM-YYYY' text; return a date or None."""
     if isinstance(value, datetime.date):
         return value
     return to_date(value)
@@ -467,8 +503,8 @@ def to_date_any(value) -> datetime.date | None:
 
 def check_service_pace(entries: list[dict], service_date: str, odometer: int,
                        model_year: int | None, ignore_id: int | None = None) -> str | None:
-    """Checks if a service's odometer is reachable at MAX_KM_PER_DAY: from 0 km on
-    1 January of the model year, compared with every other service of this car.
+    """A service's odometer must be reachable at MAX_KM_PER_DAY: from 0 km on
+    1 January of the model year, and from/to every other service of this car.
     ignore_id skips the entry being edited. Returns a message, or None if fine."""
     if model_year:
         problem = km_pace_problem(datetime.date(model_year, 1, 1), 0, service_date, odometer)
@@ -488,17 +524,16 @@ def check_service_pace(entries: list[dict], service_date: str, odometer: int,
 
 
 def max_plausible_odometer(last_date, last_km: int, today: datetime.date) -> int:
-    """The highest possible reading today, given the last reading on file:
-    last reading on file + MAX_KM_PER_DAY for each day since then (at least one day)."""
+    """The highest believable reading today, given the last reading on file:
+    last_km + MAX_KM_PER_DAY for each day since then (at least one day)."""
     start = to_date_any(last_date) or today
     days = max(1, (today - start).days)
     return last_km + MAX_KM_PER_DAY * days
 
 
 def latest_reading(entries: list[dict], checks: list[dict]) -> tuple | None:
-    """Find the car's highest odometer reading on file and its date, looking at both
-    the service history and the AI checks. Gives back (date_text, km), or None if
-    there are no readings yet."""
+    """The car's highest odometer reading on file and its date, from service entries
+    and AI checks together. Returns (date_text, km) or None if there is none."""
     readings = []
     for entry in entries:
         if isinstance(entry.get("service_odometer"), int) and to_date(entry.get("service_date")):
@@ -515,9 +550,9 @@ def latest_reading(entries: list[dict], checks: list[dict]) -> tuple | None:
 def find_duplicate_service(entries: list[dict], part_name: str, service_date: str,
                            odometer: int, ignore_id: int | None = None,
                            service_action: str | None = None) -> dict | None:
-    """Look for an existing entry with the same part, date and odometer, which means
-    the same service was typed in twice. If service_action is given, it has to match
-    too. ignore_id skips the entry being edited. Gives back the match, or None."""
+    """Return an existing entry with the same part, date and odometer (the same service
+    typed twice), or None. Compare the performed action when supplied;
+    ignore_id skips the entry being edited."""
     for entry in entries:
         if ignore_id is not None and entry.get("service_id") == ignore_id:
             continue
@@ -536,9 +571,12 @@ def find_duplicate_service(entries: list[dict], part_name: str, service_date: st
 # ======================================================================
 
 def choose_interval(rule: dict, part_services: list[dict]) -> dict:
-    """Picks an interval according to the manual. Some manuals have a first change
-    interval and another interval for subsequent changes. This checks which one is 
-    applicable. """
+    """Pick the interval that applies to the next service of a part. When the manual
+    says 'first at X, then every Y' (rule has repeat_km/repeat_months) and this part
+    has already been replaced at least once, the repeat
+    interval Y applies; otherwise the first interval X does.
+    Returns {"interval_km", "interval_months", "action", "interval_stage"}, where
+    interval_stage is "first", "repeat" or None (the manual has only one interval)."""
     chosen = {"interval_km": rule["interval_km"], "interval_months": rule["interval_months"],
               "action": rule.get("action", "replace"), "interval_stage": None}
     if "repeat_km" in rule:
@@ -555,10 +593,9 @@ def choose_interval(rule: dict, part_services: list[dict]) -> dict:
 
 
 def from_new_service(part_name: str, model_year: int) -> dict:
-    """A stand-in "last service" for a part that has never been replaced, so we can
-    count from when the car was new: 0 km on 1 January of its model year (if exact build date 
-    is unknown). Used for first-change checks such as coolant.
-    It is never saved to the history."""
+    """A stand-in "last service" for a part that has never been replaced: the car as
+    new, at 0 km on 1 January of its model year (the earliest date it can have been
+    made). Used for first-change checks such as coolant. It is not saved."""
     return {"service_id": None, "part_name": part_name,
             "service_date": f"01-01-{model_year}", "service_odometer": 0,
             "notes": "from new (never replaced)"}
