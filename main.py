@@ -284,110 +284,155 @@ def delete_service_flow(user: dict) -> None:
 
 
 # ======================================================================
-# URGENCY CHECKS (AI) and the urgent list
+# MAINTENANCE CHECKS
 # ======================================================================
 
-def check_part_flow(user: dict) -> None:
-    """Menu option 5: check one part, based on its latest service in the history.
-    Saves and shows the result (or the earlier answer for repeated inputs)."""
+# Ask which supported part to check and return its manual and schedule details.
+def check_setup(user: dict) -> tuple | None:
     car_model = user["car_model"]
-
-    # The AI needs this car's manual PDF; stop early rather than crash without it.
     manual_path = data_manager.get_manual_path(car_model)
-    if manual_path is None:
-        io_manager.display_message(f"The manual for {car_model} is missing, so parts can't be checked.")
-        return
 
-    # Business rule 2: intervals must come from the stored schedule (cars.json).
+    if manual_path is None:
+        io_manager.display_message(
+            f"The manual for {car_model} is missing, so parts can't be checked."
+        )
+        return None
+
     parts = data_manager.list_parts(car_model)
     if not parts:
-        io_manager.display_message("No service schedule is available, so parts can't be checked.")
-        return
+        io_manager.display_message(
+            "No service schedule is available, so parts can't be checked."
+        )
+        return None
 
     part_name = io_manager.prompt_part_choice(parts)
     interval = data_manager.get_service_interval(car_model, part_name)
     if interval is None:
         io_manager.display_message(f"No stored service interval for {part_name}.")
-        return
+        return None
 
-    # The "last service" comes from the maintenance history, not from typing it again.
+    return manual_path, part_name, interval
+
+
+# Find the latest service that can reset this part's manufacturer interval.
+def latest_service_for_check(user: dict, part_name: str, interval: dict) -> tuple:
     history = data_manager.history_for_plate(user["license_plate"])
-    model_year = data_manager.get_model_year(car_model)
+    model_year = data_manager.get_model_year(user["car_model"])
+    required_action = interval.get("action", "replace")
+
     last_service = logic_manager.latest_service(
-        history, part_name, interval.get("action", "replace"), model_year
+        history, part_name, required_action, model_year
+    )
+    return history, model_year, last_service
+
+
+# Get a usable last service, asking the user to add one when needed.
+def resolve_last_service(user: dict, part_name: str, interval: dict) -> tuple | None:
+    history, model_year, last_service = latest_service_for_check(
+        user, part_name, interval
     )
     from_new = False
-    if last_service is None:
-        io_manager.display_message(f"\nThere is no {part_name} service in your maintenance history yet.")
-        # A part with a 'first at X, then every Y' rule (e.g. coolant) may never have
-        # been replaced; then the first interval is counted from the car being new.
-        if "repeat_km" in interval and model_year is not None:
-            from_new = not io_manager.confirm_action(f"Has the {part_name} ever been replaced?")
 
-        if from_new:
-            last_service = logic_manager.from_new_service(part_name, model_year)
-        else:
-            if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
-                return
-            new_entries = save_new_services(user, part_name)
-            if not new_entries:
-                return
-            history = data_manager.history_for_plate(user["license_plate"])
-            last_service = logic_manager.latest_service(
-                history, part_name, interval.get("action", "replace"), model_year
-            )
-            if last_service is None:
-                io_manager.display_message(
-                    "The entry was saved, but an inspection does not reset this service interval. "
-                    "Record the last replacement or rotation before checking this part."
-                )
-                return
+    if last_service is not None:
+        return last_service, history, model_year, from_new
+
+    io_manager.display_message(
+        f"\nThere is no {part_name} service in your maintenance history yet."
+    )
+
+    # Parts with a first/repeat rule can start from the car being new.
+    if "repeat_km" in interval and model_year is not None:
+        from_new = not io_manager.confirm_action(
+            f"Has the {part_name} ever been replaced?"
+        )
 
     if from_new:
-        io_manager.display_message(f"\nChecking your {part_name} from new "
-                                   "(the manual's first-change interval applies):")
+        last_service = logic_manager.from_new_service(part_name, model_year)
+        return last_service, history, model_year, from_new
+
+    if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
+        return None
+
+    if not save_new_services(user, part_name):
+        return None
+
+    history, model_year, last_service = latest_service_for_check(
+        user, part_name, interval
+    )
+    if last_service is None:
+        io_manager.display_message(
+            "The entry was saved, but an inspection does not reset this service interval. "
+            "Record the last replacement or rotation before checking this part."
+        )
+        return None
+
+    return last_service, history, model_year, from_new
+
+
+# Show which service the maintenance check is using.
+def display_check_service(part_name: str, last_service: dict,
+                          from_new: bool) -> None:
+    if from_new:
+        io_manager.display_message(
+            f"\nChecking your {part_name} from new "
+            "(the manual's first-change interval applies):"
+        )
     else:
-        io_manager.display_message(f"\nUsing your last {part_name} service from your history:")
+        io_manager.display_message(
+            f"\nUsing your last {part_name} service from your history:"
+        )
+
     io_manager.display_service(last_service)
 
-    # 'First at X, then every Y': once this part has been replaced, Y applies.
-    part_services = [e for e in history if e.get("part_name") == part_name]
-    chosen_interval = logic_manager.choose_interval(interval, part_services)
 
-    # Business rule 1: the new odometer reading can't go backwards. main.py looks up
-    # the last reading because io_manager is not allowed to read the data files.
-    # Plausibility: no more than MAX_KM_PER_DAY since the latest reading on file.
-    my_checks = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
-    latest = logic_manager.latest_reading(data_manager.history_for_plate(user["license_plate"]),
-                                          my_checks)
+# Ask for today's odometer after checking it against saved readings.
+def prompt_check_odometer(user: dict, last_service: dict,
+                          history: list[dict]) -> int:
+    plate = user["license_plate"]
+    saved_checks = data_manager.query(
+        lambda record: record.get("license_plate") == plate
+    )
+    latest_reading = logic_manager.latest_reading(history, saved_checks)
+
     max_plausible = None
-    if latest is not None:
-        max_plausible = logic_manager.max_plausible_odometer(latest[0], latest[1],
-                                                             datetime.date.today())
-    current_odometer = io_manager.prompt_current_odometer(
-        last_service["service_odometer"], last_odometer_on_file(user["license_plate"]),
-        max_plausible)
+    if latest_reading is not None:
+        reading_date, reading_odometer = latest_reading
+        max_plausible = logic_manager.max_plausible_odometer(
+            reading_date, reading_odometer, datetime.date.today()
+        )
 
+    last_odometer = last_odometer_on_file(plate)
+    return io_manager.prompt_current_odometer(
+        last_service["service_odometer"], last_odometer, max_plausible
+    )
+
+
+# Build the record sent to AI and add brake history when checking brake pads.
+def build_check_record(user: dict, part_name: str, last_service: dict,
+                       current_odometer: int, chosen_interval: dict,
+                       model_year: int | None) -> dict:
+    today = datetime.date.today()
     raw_record = {
         "license_plate": user["license_plate"],
-        "car_model": car_model,
+        "car_model": user["car_model"],
         "car_condition": user["car_condition"],
         "coe_expiry_date": user["coe_expiry_date"],
         "part_name": part_name,
-        "check_date": datetime.date.today().strftime("%d-%m-%Y"),   # stored as DD-MM-YYYY
+        "check_date": today.strftime("%d-%m-%Y"),
         "service_id": last_service.get("service_id"),
         "last_service_date": last_service["service_date"],
         "last_service_mileage": last_service["service_odometer"],
         "last_service_action": last_service.get("service_action") or "unknown",
         "current_odometer": current_odometer,
     }
-    raw_record.update(chosen_interval)   # interval_km, interval_months, action, interval_stage
+    raw_record.update(chosen_interval)
 
-    # Brake Pads use personalised history only after Python verifies enough reliable replacements.
     if part_name == "Brake Pads":
-        raw_history = data_manager.history_for_part(user["license_plate"], part_name)
+        brake_history = data_manager.history_for_part(
+            user["license_plate"], part_name
+        )
         context = logic_manager.brake_history_context(
-            raw_history, model_year, datetime.date.today(), current_odometer
+            brake_history, model_year, today, current_odometer
         )
         raw_record["history_context"] = {
             "eligible": context["eligible"],
@@ -395,43 +440,84 @@ def check_part_flow(user: dict) -> None:
             "reason": context["reason"],
         }
         if context["eligible"]:
-            # The AI gets the validated raw replacement points and calculates intervals itself.
             raw_record["brake_pad_history"] = context["replacement_records"]
 
-    # Nothing new since a saved check (same plate, part, last service and current km)?
-    # Show the saved answer instead of calling the AI again (saves API calls).
+    return raw_record
+
+
+# Menu option 5: assess one part using the manual, history and current mileage.
+def check_part_flow(user: dict) -> None:
+    setup = check_setup(user)
+    if setup is None:
+        return
+
+    manual_path, part_name, interval = setup
+    service_details = resolve_last_service(user, part_name, interval)
+    if service_details is None:
+        return
+
+    last_service, history, model_year, from_new = service_details
+    display_check_service(part_name, last_service, from_new)
+
+    part_services = [
+        service for service in history
+        if service.get("part_name") == part_name
+    ]
+    chosen_interval = logic_manager.choose_interval(interval, part_services)
+    current_odometer = prompt_check_odometer(user, last_service, history)
+
+    raw_record = build_check_record(
+        user,
+        part_name,
+        last_service,
+        current_odometer,
+        chosen_interval,
+        model_year,
+    )
+
+    # Reuse a saved answer only if all repeat fields still match.
     previous = data_manager.find_repeat(raw_record)
     if previous is not None:
         io_manager.display_repeated(previous)
         return
 
-    io_manager.display_message("\nAsking the AI to check this part against your manual...")
+    io_manager.display_message(
+        "\nAsking the AI to check this part against your manual..."
+    )
     final_record = build_record(raw_record, manual_path)
 
-    # A failed save is warned about, but the result is still shown.
-    saved_ok = data_manager.save(final_record)
-    if not saved_ok:
-        io_manager.display_message("Warning: the assessment could not be saved to disk.")
+    if not data_manager.save(final_record):
+        io_manager.display_message(
+            "Warning: the assessment could not be saved to disk."
+        )
     io_manager.display_result(final_record)
 
 
+# Menu option 6: show each part's latest assessment needing attention.
 def urgent_flow(user: dict) -> None:
-    """Menu option 6: list the parts that need attention, highest risk first.
-    Only each part's newest check counts, so a re-checked part drops off the list."""
-    my_checks = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
-    # is_urgent(): outcome starts with URGENT, FLAGGED, DUE SOON, COE EXPIRED
-    # or NEEDS MANUAL REVIEW.
+    plate = user["license_plate"]
+    saved_checks = data_manager.query(
+        lambda record: record.get("license_plate") == plate
+    )
+
     urgent_records = []
-    for record in logic_manager.latest_check_per_part(my_checks):
+    for record in logic_manager.latest_check_per_part(saved_checks):
         if logic_manager.is_urgent(record):
             urgent_records.append(record)
-    # Highest risk_score first; records without a score sort as 0.
-    urgent_records.sort(key=lambda r: r.get("risk_score", 0), reverse=True)
+
+    urgent_records.sort(
+        key=lambda record: record.get("risk_score", 0),
+        reverse=True,
+    )
+
     if not urgent_records:
-        io_manager.display_message("\nNothing needs attention right now: none of your parts' latest "
-                                   "checks are urgent, flagged, overdue or waiting for manual review. "
-                                   "(Choose 2 to see your history.)")
+        io_manager.display_message(
+            "\nNothing needs attention right now: none of your parts' latest "
+            "checks are urgent, flagged, overdue or waiting for manual review. "
+            "(Choose 2 to see your history.)"
+        )
         return
+
     io_manager.display_list(urgent_records)
 
 
