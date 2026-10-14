@@ -1,5 +1,14 @@
+# Google Gemini API for AI-powered maintenance analysis.
 google-genai>=1.0.0
+
+# Groq API for fast AI model responses.
 groq>=0.9.0
+
+# Read and extract information from car maintenance PDF manuals.
 pdfplumber>=0.10.0
+
+# Load API keys and environment settings from the .env file.
 python-dotenv>=1.0.0
+
+# Run automated tests to check that project functions work correctly.
 pytest>=7.0
