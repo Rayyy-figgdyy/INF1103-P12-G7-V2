@@ -535,6 +535,17 @@ def display_record(record: dict) -> None:
     print(f"Risk score:         {record.get('risk_score')}/100")
     print(f"Advice:             {record.get('recommended_action')}")
 
+    # Show whether Brake Pad history contributed to the single AI urgency assessment.
+    context = record.get("history_context")
+    if record.get("part_name") == "Brake Pads" and isinstance(context, dict):
+        if record.get("history_pattern"):
+            print(f"History used:       yes ({context.get('replacement_count', 0)} confirmed replacements)")
+            print(f"History pattern:    {record.get('history_pattern')}")
+        else:
+            print(f"History used:       no ({context.get('replacement_count', 0)} confirmed replacements)")
+            if context.get("reason"):
+                print(f"History limitation: {context.get('reason')}")
+
 
 def display_list(records: list[dict]) -> None:
     """Print many checks as a table, one row each (history and urgent views)."""

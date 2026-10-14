@@ -97,3 +97,16 @@ def test_service_action_allows_rotate_only_for_tyres(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
     assert io_manager.prompt_service_action("Brake Pads") == "replace"
     assert io_manager.prompt_service_action("Tyres") == "rotate"
+
+def test_display_record_shows_combined_brake_history_pattern(capsys):
+    record = {
+        "part_name": "Brake Pads", "car_model": "Honda City 2025",
+        "license_plate": "SBA1234A", "urgency_score": 7, "confidence": "High",
+        "history_context": {"eligible": True, "replacement_count": 3, "reason": ""},
+        "history_pattern": "Previous replacements were about 20,000 km apart.",
+    }
+    io_manager.display_record(record)
+    shown = capsys.readouterr().out
+    assert "History used:       yes" in shown
+    assert "about 20,000 km apart" in shown
+

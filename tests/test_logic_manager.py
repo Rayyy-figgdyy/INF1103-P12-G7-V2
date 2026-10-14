@@ -345,3 +345,10 @@ def test_brake_history_rejects_invalid_reading():
                 "service_date": "01-01-2026", "service_odometer": 90000}]
     context = logic_manager.brake_history_context(entries, 2020, datetime.date(2026, 10, 14), 70000)
     assert context["eligible"] is False and context["reason"]
+
+def test_combined_brake_urgency_flows_through_normal_logic():
+    record = sample_record(part_name="Brake Pads", urgency_score=8, confidence="High",
+                           current_odometer=49_000)
+    assert logic_manager.score(record) >= 80
+    assert logic_manager.route(record) == "URGENT - Service immediately"
+

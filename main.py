@@ -28,8 +28,8 @@ import logic_manager
 def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
     """Run one check through the AI, then our business rules.
     Returns the finished record with facts, risk_score and outcome added."""
-    # C2: every check goes through the AI. If no AI answers, ai_manager fills in
-    # "AI unavailable" values, so route() later gives NEEDS MANUAL REVIEW.
+    # C2: every check goes through the AI. Eligible Brake Pad history is combined with
+    # the manual inside this one AI assessment, producing one urgency_score.
     enriched = ai_manager.process(raw_record, manual_path=manual_path)
 
     # Add our own facts: km/days since service, overdue flags, service-by date.

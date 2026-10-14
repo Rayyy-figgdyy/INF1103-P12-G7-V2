@@ -31,21 +31,27 @@ VALID_CONDITIONS = ("Brand New", "Used")
 # schedule entry has no "action".
 VALID_ACTIONS = ("replace", "inspect", "rotate")
 
-# A new check is a "repeat" when ALL five inputs match a saved check. main.py then shows
-# the saved answer instead of calling the AI again: same inputs give the same result,
-# with no extra API usage. check_date is not compared, so a repeat on another day counts.
+# Reuse an AI answer only when every input used for that assessment still matches.
+# Eligible Brake Pad replacement history is included so a changed pattern gets a fresh score.
 REPEAT_FIELDS = (
     "license_plate",
+    "car_model",
+    "car_condition",
+    "coe_expiry_date",
     "part_name",
     "last_service_date",
     "last_service_mileage",
+    "last_service_action",
     "current_odometer",
     "check_date",
     "interval_km",
     "interval_months",
     "action",
     "interval_stage",
+    "brake_pad_history",
+    "history_context",
 )
+
 
 
 # ======================================================================
@@ -239,7 +245,7 @@ def get_last_odometer(records: list[dict], license_plate: str) -> int | None:
     readings from every part count, since the odometer belongs to the whole car."""
     readings = []
     for record in records:
-        if record.get("license_plate") != license_plate:
+        if not isinstance(record, dict) or record.get("license_plate") != license_plate:
             continue
         for field in ("current_odometer", "service_odometer"):
             odometer = record.get(field)
@@ -257,7 +263,7 @@ def delete_records_for_plate(license_plate: str) -> int:
     records = load()
     remaining = []
     for record in records:
-        if record.get("license_plate") != license_plate:
+        if not isinstance(record, dict) or record.get("license_plate") != license_plate:
             remaining.append(record)
     removed_count = len(records) - len(remaining)
     if removed_count > 0 and not write_list(PROMPTS_FILE, remaining):

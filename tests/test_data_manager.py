@@ -529,6 +529,26 @@ def test_no_history_means_no_repeat():
         ) is None
 
 
+def test_changed_brake_history_is_not_a_repeat():
+    with temp_data_files():
+        check = {
+            **CHECK,
+            "part_name": "Brake Pads",
+            "brake_pad_history": [
+                {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
+                {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
+                {"service_date": "01-01-2026", "service_odometer": 60000, "service_action": "replace"},
+            ],
+            "history_context": {"eligible": True, "replacement_count": 3, "reason": ""},
+            "urgency_score": 6,
+        }
+        data_manager.save(check)
+        changed = dict(check)
+        changed["brake_pad_history"] = [dict(item) for item in check["brake_pad_history"]]
+        changed["brake_pad_history"][2]["service_odometer"] = 61000
+        assert data_manager.find_repeat(changed) is None
+
+
 # --- Maintenance history CRUD -----------------------------------------------
 
 SERVICE = {
