@@ -97,7 +97,8 @@ def prompt_valid_invoice(user: dict, history: list[dict], parts: list[str],
             return None
 
 
-# Save one part from an invoice and return the saved entry.
+# Save one part from an add invoice and return the saved entry.
+#add maintenace history entry for one part, ignoring duplicates and failed saves.
 def save_invoice_part(user: dict, history: list[dict], invoice: dict,
                       part_name: str) -> dict | None:
     # One invoice can cover several parts with different service actions.

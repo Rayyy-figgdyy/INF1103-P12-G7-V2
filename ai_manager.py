@@ -4,8 +4,10 @@ ai_manager.py -- the AI processing layer (the app's "core engine").
 Pipeline: io_manager -> ai_manager -> logic_manager -> data_manager.
 For one maintenance check: build_prompt -> call the AI -> parse_response ->
 validate_response; process() runs all four and is what main.py calls.
+
 Gemini (manual PDF attached) is the main AI; Groq (text excerpt of the manual)
 is the backup; if both fail, FALLBACK_ASSESSMENT -> "NEEDS MANUAL REVIEW".
+
 No business rules here, and errors go to the log, never print().
 """
 import json
@@ -389,7 +391,7 @@ def validate_response(data: dict | None, expect_history: bool = False) -> dict |
         "ai_status": "ok",
     }
 
-    # Eligible Brake Pad history is part of the same assessment, not a second score.
+    # Eligible Brake Pad history is part of the same assessment, not a second different score.
     if expect_history:
         pattern = data.get("history_pattern")
         if not isinstance(pattern, str) or not pattern.strip():

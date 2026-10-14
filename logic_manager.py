@@ -5,11 +5,14 @@ Takes one maintenance check that the AI has already scored and applies our rules
   - evaluate(): the facts (overdue by km OR time, km/day, COE days left, service-by date)
   - score():    a 0-100 risk score, used only to sort the urgent list
   - route():    the final outcome text; includes the urgency + confidence rule
+
 Rules held here: overdue = whichever limit comes first, brake pads and tyres are
 safety-critical, the "service by" date (business rule 3) and the Singapore COE rules.
+
 It also holds the rules for the maintenance history: which service is the latest for
 a part, odometer readings that must go up over time (business rule 1), and which AI
 check is the latest one for each part.
+
 All arithmetic is done here, not by the AI. No screen, AI or file access.
 """
 import datetime    # Python's built-in tools for dates

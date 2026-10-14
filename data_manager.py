@@ -6,8 +6,10 @@ Four JSON files in data/:
     prompt_records.json        every AI urgency check, also used to spot repeated input
     users.json                 user profiles, one per license plate
     cars.json                  the 4 supported cars and their service schedules
+
 Pipeline: io -> ai -> logic -> data. Only main.py calls this file; no other manager
 reads or writes these data files.
+
 Only saving, loading and lookups here: no business decisions and no print().
 """
 import json
@@ -28,7 +30,7 @@ CARS_FILE = os.path.join(DATA_DIR, "cars.json")
 VALID_CONDITIONS = ("Brand New", "Used")
 
 # What a manual can tell you to do with a part. "replace" is the default when a
-# schedule entry has no "action".
+# schedule entry has no "action"
 VALID_ACTIONS = ("replace", "inspect", "rotate")
 
 # Reuse an AI answer only when every input used for that assessment still matches.
@@ -94,7 +96,7 @@ def write_list(path: str, items: list[dict]) -> bool:
     The temporary file keeps the original intact if a write fails halfway."""
     temporary_path = path + ".tmp"
     try:
-        # Missing files are normal, but a damaged EXISTING file must be protected.
+        # Missing files are normal, but a damaged EXISTING file must be protected not overwritten.
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as existing_file:
                 existing_data = json.load(existing_file)
