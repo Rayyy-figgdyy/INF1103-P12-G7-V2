@@ -158,9 +158,13 @@ def build_prompt(record: dict) -> str:
     if record.get("part_name") == "Brake Pads" and isinstance(history, list) and len(history) >= 3:
         prompt += (
             "PERSONALISED BRAKE-PAD HISTORY\n"
-            f"- Confirmed replacement records: {json.dumps(history, ensure_ascii=False)}\n"
-            "- These records were already validated by the program. Calculate the "
-            "replacement-to-replacement mileage intervals yourself.\n"
+            # Provide every eligible history entry, including inspections.
+            f"- Raw brake-pad servicing records: {json.dumps(history, ensure_ascii=False)}\n"
+            "- These records passed the history eligibility checks. Consider all entries, "
+            "but count ONLY service_action=replace as confirmed replacements.\n"
+            "- Inspections provide context but do not count as replacements or reset a "
+            "replacement interval; unknown actions are not confirmed replacements.\n"
+            "- Calculate the replacement-to-replacement mileage intervals yourself.\n"
             "- Use the manual baseline AND this car's replacement pattern together to create "
             "ONE combined urgency_score. Do not create a separate history urgency score.\n"
             "- The manual remains authoritative. The history may add personalised context, "

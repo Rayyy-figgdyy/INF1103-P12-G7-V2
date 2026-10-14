@@ -476,9 +476,10 @@ def build_check_record(user: dict, part_name: str, last_service: dict,
             "replacement_count": context["replacement_count"],  # Count of confirmed replacements.
             "reason": context["reason"],
         }
-        # Only eligible replacement records are attached to the AI input.
+        # Give AI all relevant raw entries, including inspections and replacements.
+        # The validation above must pass before the history can be used.
         if context["eligible"]:
-            raw_record["brake_pad_history"] = context["replacement_records"]
+            raw_record["brake_pad_history"] = brake_history
 
     return raw_record
 

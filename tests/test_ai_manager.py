@@ -340,3 +340,17 @@ def test_brake_prompt_ignores_too_little_history():
     assert "PERSONALISED BRAKE-PAD HISTORY" not in prompt
     assert "history_pattern" not in prompt
 
+
+
+def test_brake_prompt_keeps_inspections_as_context():
+    history = [
+        {"service_date": "01-01-2022", "service_odometer": 20_000, "service_action": "replace"},
+        {"service_date": "01-06-2022", "service_odometer": 25_000, "service_action": "inspect"},
+        {"service_date": "01-01-2023", "service_odometer": 40_000, "service_action": "replace"},
+        {"service_date": "01-01-2024", "service_odometer": 60_000, "service_action": "replace"},
+    ]
+    prompt = ai_manager.build_prompt({**RECORD, "part_name": "Brake Pads",
+                                      "brake_pad_history": history})
+    assert '"service_action": "inspect"' in prompt
+    assert "count ONLY service_action=replace" in prompt
+    assert "replacement-to-replacement mileage intervals" in prompt
