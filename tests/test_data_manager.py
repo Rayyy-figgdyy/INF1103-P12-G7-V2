@@ -1,3 +1,4 @@
+# Verify JSON persistence and safe maintenance-history operations.
 """
 Tests for data_manager: user CRUD, maintenance history CRUD, prompt records, the stored
 manufacturer schedule, repeat detection, and missing/corrupt file handling. Every test

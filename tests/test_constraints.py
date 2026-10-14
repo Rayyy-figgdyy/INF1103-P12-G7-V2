@@ -1,3 +1,4 @@
+# Check that the procedural architecture follows the project constraints.
 """
 Automated checks for the framework's structural rules, so a violation
 fails the tests (and the Docker build and CI) before an assessor finds it:

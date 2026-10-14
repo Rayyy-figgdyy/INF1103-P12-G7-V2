@@ -1,3 +1,4 @@
+# Test manufacturer intervals, service actions and urgency decisions.
 """
 Tests for logic_manager using hardcoded sample AI responses -- no live
 API connection (framework brief 5.3). Run with:  python -m pytest

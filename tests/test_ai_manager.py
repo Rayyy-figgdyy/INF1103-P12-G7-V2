@@ -1,3 +1,4 @@
+# AI tests use simulated clients to verify response handling without live API calls.
 """
 Tests for ai_manager's response handling with hardcoded sample AI
 responses and a fake client -- no network, no API key. Covers the

@@ -1,3 +1,4 @@
+# Verify that maintenance checks use eligible raw brake-pad history.
 """Check that main passes raw brake-pad history to the existing AI pipeline."""
 import data_manager
 import main

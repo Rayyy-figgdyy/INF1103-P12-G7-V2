@@ -1,3 +1,4 @@
+# Exercise terminal input validation and output formatting.
 """
 Regression tests for io_manager's display functions: a damaged or
 old-format record in the data file must never crash the history screen.
