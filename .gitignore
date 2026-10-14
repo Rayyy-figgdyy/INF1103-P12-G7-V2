@@ -8,9 +8,6 @@ __pycache__/
 .venv/
 venv/
 
-# Created by the app while it runs (cars.json IS committed)
-
-
 # macOS
 .DS_Store
 
