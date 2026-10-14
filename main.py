@@ -79,131 +79,204 @@ def last_odometer_on_file(license_plate: str) -> int | None:
 # MAINTENANCE HISTORY: Create, Read, Update, Delete ("CRUD")
 # ======================================================================
 
+# Ask for an invoice until its date and mileage fit the saved history.
+def prompt_valid_invoice(user: dict, history: list[dict], parts: list[str],
+                         part_name: str | None = None) -> dict | None:
+    while True:
+        invoice = io_manager.prompt_service_entry(
+            parts, part_name, earliest_service_date(user)
+        )
+        problem = service_problem(
+            user, history, invoice["service_date"], invoice["service_odometer"]
+        )
+
+        if problem is None:
+            return invoice
+
+        io_manager.display_message(f"  -> {problem}")
+        if not io_manager.confirm_action("Enter this invoice again?"):
+            return None
+
+
+# Save one part from an invoice and return the saved entry.
+def save_invoice_part(user: dict, history: list[dict], invoice: dict,
+                      part_name: str) -> dict | None:
+    service_action = invoice["service_actions"][part_name]
+
+    duplicate = logic_manager.find_duplicate_service(
+        history,
+        part_name,
+        invoice["service_date"],
+        invoice["service_odometer"],
+        service_action=service_action,
+    )
+    if duplicate is not None:
+        io_manager.display_message(
+            f"  -> {part_name} on {invoice['service_date']} at "
+            f"{invoice['service_odometer']:,} km is already in your history, "
+            "so it was not added again."
+        )
+        return None
+
+    entry = {
+        "license_plate": user["license_plate"],
+        "part_name": part_name,
+        "service_action": service_action,
+        "service_date": invoice["service_date"],
+        "service_odometer": invoice["service_odometer"],
+        "notes": invoice["notes"],
+    }
+
+    saved = data_manager.add_service(entry)
+    if saved is None:
+        io_manager.display_message(
+            f"Could not save the {part_name} service. Please try again."
+        )
+    return saved
+
+
+# Ask for one invoice and save one history entry for each serviced part.
 def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
-    """Ask for one invoice and add one history entry per part on it (they share the
-    date, odometer and note), re-asking if the odometer doesn't fit with the other
-    services (business rule 1). part_name limits the invoice to that one part.
-    Returns the saved entries ([] if cancelled or saving failed)."""
     parts = data_manager.list_parts(user["car_model"])
     if not parts:
         io_manager.display_message("No service schedule is available for your car.")
         return []
 
     history = data_manager.history_for_plate(user["license_plate"])
-    while True:
-        invoice = io_manager.prompt_service_entry(parts, part_name, earliest_service_date(user))
-        problem = service_problem(user, history, invoice["service_date"],
-                                  invoice["service_odometer"])
-        if problem is None:
-            break
-        io_manager.display_message(f"  -> {problem}")
-        if not io_manager.confirm_action("Enter this invoice again?"):
-            return []
+    invoice = prompt_valid_invoice(user, history, parts, part_name)
+    if invoice is None:
+        return []
 
-    # Each part gets its own entry, because each part has its own schedule and a
-    # check looks up the last service of one part at a time.
     saved_entries = []
     for name in invoice["part_names"]:
-        service_action = invoice["service_actions"][name]
-        # Match the action so an inspection and a replacement remain separate entries.
-        if logic_manager.find_duplicate_service(
-                history, name, invoice["service_date"], invoice["service_odometer"],
-                service_action=service_action) is not None:
-            io_manager.display_message(f"  -> {name} on {invoice['service_date']} at "
-                                       f"{invoice['service_odometer']:,} km is already in your "
-                                       "history, so it was not added again.")
-            continue
-        entry = {
-            "license_plate": user["license_plate"],
-            "part_name": name,
-            "service_action": service_action,
-            "service_date": invoice["service_date"],
-            "service_odometer": invoice["service_odometer"],
-            "notes": invoice["notes"],
-        }
-        saved = data_manager.add_service(entry)
-        if saved is None:
-            io_manager.display_message(f"Could not save the {name} service. Please try again.")
-        else:
+        saved = save_invoice_part(user, history, invoice, name)
+        if saved is not None:
             saved_entries.append(saved)
 
     if saved_entries:
-        io_manager.display_message(f"\n{len(saved_entries)} service(s) added to your history:")
+        io_manager.display_message(
+            f"\n{len(saved_entries)} service(s) added to your history:"
+        )
         for saved in saved_entries:
             io_manager.display_service(saved)
+
     return saved_entries
 
 
+# Menu option 1: add an invoice to the car's maintenance history.
 def add_service_flow(user: dict) -> None:
-    """Menu option 1: CREATE history entries from one invoice (one entry per part)."""
     save_new_services(user)
 
 
+# Menu option 2: show services newest first with their latest assessments.
 def history_flow(user: dict) -> None:
-    """Menu option 2: READ the car's maintenance history, newest first, with the
-    latest AI urgency check for each service next to it."""
-    entries = logic_manager.sort_history(data_manager.history_for_plate(user["license_plate"]))
+    plate = user["license_plate"]
+    entries = logic_manager.sort_history(data_manager.history_for_plate(plate))
+
     if not entries:
-        io_manager.display_message(f"\nNo services in the history for {user['license_plate']} yet. "
-                                   "Choose 1 to add the services you've had done.")
+        io_manager.display_message(
+            f"\nNo services in the history for {plate} yet. "
+            "Choose 1 to add the services you've had done."
+        )
         return
 
-    my_checks = data_manager.query(lambda r: r.get("license_plate") == user["license_plate"])
+    saved_checks = data_manager.query(
+        lambda record: record.get("license_plate") == plate
+    )
+
     rows = []
     for entry in entries:
-        row = dict(entry)               # a copy, so the saved entry isn't changed
-        row["latest_check"] = logic_manager.latest_check_for_service(my_checks, entry)
+        row = dict(entry)  # Copy it so the saved entry is not changed.
+        row["latest_check"] = logic_manager.latest_check_for_service(
+            saved_checks, entry
+        )
         rows.append(row)
+
     io_manager.display_history(rows)
 
 
+# Check whether an edited service conflicts with saved history.
+def edited_service_problem(user: dict, entries: list[dict], chosen: dict,
+                           updated: dict) -> str | None:
+    problem = service_problem(
+        user,
+        entries,
+        updated["service_date"],
+        updated["service_odometer"],
+        chosen.get("service_id"),
+    )
+    if problem is not None:
+        return problem
+
+    duplicate = logic_manager.find_duplicate_service(
+        entries,
+        updated["part_name"],
+        updated["service_date"],
+        updated["service_odometer"],
+        chosen.get("service_id"),
+        service_action=updated.get("service_action") or "unknown",
+    )
+    if duplicate is not None:
+        return "That would be an exact copy of a service already in your history."
+
+    return None
+
+
+# Menu option 3: edit one saved service after validation.
 def edit_service_flow(user: dict) -> None:
-    """Menu option 3: UPDATE one service entry (part, date, odometer or note)."""
-    entries = logic_manager.sort_history(data_manager.history_for_plate(user["license_plate"]))
+    entries = logic_manager.sort_history(
+        data_manager.history_for_plate(user["license_plate"])
+    )
     if not entries:
-        io_manager.display_message("\nYour history is empty, so there is nothing to edit.")
+        io_manager.display_message(
+            "\nYour history is empty, so there is nothing to edit."
+        )
         return
+
     chosen = io_manager.prompt_service_choice(entries, "edit")
     if chosen is None:
         io_manager.display_message("Edit cancelled.")
         return
 
     parts = data_manager.list_parts(user["car_model"])
-    updated = io_manager.prompt_updated_service(chosen, parts, earliest_service_date(user))
-    # The edited service must still fit the other services, and must not become an
-    # exact copy of another entry.
-    problem = service_problem(user, entries, updated["service_date"],
-                              updated["service_odometer"], chosen.get("service_id"))
-    if problem is None and logic_manager.find_duplicate_service(
-            entries, updated["part_name"], updated["service_date"],
-            updated["service_odometer"], chosen.get("service_id"),
-            service_action=updated.get("service_action") or "unknown") is not None:
-        problem = "That would be an exact copy of a service already in your history."
+    updated = io_manager.prompt_updated_service(
+        chosen, parts, earliest_service_date(user)
+    )
+
+    problem = edited_service_problem(user, entries, chosen, updated)
     if problem is not None:
         io_manager.display_message(f"  -> {problem}\nNothing was changed.")
         return
+
     if not data_manager.update_service(updated):
         io_manager.display_message("Could not save your changes. Please try again.")
         return
+
     io_manager.display_message("\nService updated:")
     io_manager.display_service(updated)
 
 
+# Menu option 4: delete one saved service after confirmation.
 def delete_service_flow(user: dict) -> None:
-    """Menu option 4: DELETE one service entry, after a y/n confirmation.
-    Earlier AI checks stay in prompt_records.json as a log."""
-    entries = logic_manager.sort_history(data_manager.history_for_plate(user["license_plate"]))
+    entries = logic_manager.sort_history(
+        data_manager.history_for_plate(user["license_plate"])
+    )
     if not entries:
-        io_manager.display_message("\nYour history is empty, so there is nothing to delete.")
+        io_manager.display_message(
+            "\nYour history is empty, so there is nothing to delete."
+        )
         return
+
     chosen = io_manager.prompt_service_choice(entries, "delete")
     if chosen is None:
         io_manager.display_message("Delete cancelled.")
         return
+
     io_manager.display_service(chosen)
     if not io_manager.confirm_action("Delete this service from your history?"):
         io_manager.display_message("Delete cancelled.")
         return
+
     if data_manager.delete_service(chosen.get("service_id")):
         io_manager.display_message("Service deleted.")
     else:
