@@ -239,19 +239,20 @@ def check_part_flow(user: dict) -> None:
 
     # The "last service" comes from the maintenance history, not from typing it again.
     history = data_manager.history_for_plate(user["license_plate"])
+    model_year = data_manager.get_model_year(car_model)
     last_service = logic_manager.latest_service(
-        history, part_name, interval.get("action", "replace")
+        history, part_name, interval.get("action", "replace"), model_year
     )
     from_new = False
     if last_service is None:
         io_manager.display_message(f"\nThere is no {part_name} service in your maintenance history yet.")
-        model_year = data_manager.get_model_year(car_model)
         # A part with a 'first at X, then every Y' rule (e.g. coolant) may never have
         # been replaced; then the first interval is counted from the car being new.
-        if ("repeat_km" in interval and model_year is not None
-                and not io_manager.confirm_action(f"Has the {part_name} ever been replaced?")):
+        if "repeat_km" in interval and model_year is not None:
+            from_new = not io_manager.confirm_action(f"Has the {part_name} ever been replaced?")
+
+        if from_new:
             last_service = logic_manager.from_new_service(part_name, model_year)
-            from_new = True
         else:
             if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
                 return
@@ -260,7 +261,7 @@ def check_part_flow(user: dict) -> None:
                 return
             history = data_manager.history_for_plate(user["license_plate"])
             last_service = logic_manager.latest_service(
-                history, part_name, interval.get("action", "replace")
+                history, part_name, interval.get("action", "replace"), model_year
             )
             if last_service is None:
                 io_manager.display_message(
@@ -308,6 +309,21 @@ def check_part_flow(user: dict) -> None:
         "current_odometer": current_odometer,
     }
     raw_record.update(chosen_interval)   # interval_km, interval_months, action, interval_stage
+
+    # Brake Pads use personalised history only after Python verifies enough reliable replacements.
+    if part_name == "Brake Pads":
+        raw_history = data_manager.history_for_part(user["license_plate"], part_name)
+        context = logic_manager.brake_history_context(
+            raw_history, model_year, datetime.date.today(), current_odometer
+        )
+        raw_record["history_context"] = {
+            "eligible": context["eligible"],
+            "replacement_count": context["replacement_count"],
+            "reason": context["reason"],
+        }
+        if context["eligible"]:
+            # The AI gets the validated raw replacement points and calculates intervals itself.
+            raw_record["brake_pad_history"] = context["replacement_records"]
 
     # Nothing new since a saved check (same plate, part, last service and current km)?
     # Show the saved answer instead of calling the AI again (saves API calls).

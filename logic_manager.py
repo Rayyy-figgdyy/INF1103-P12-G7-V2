@@ -286,12 +286,75 @@ def sort_history(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=service_sort_key, reverse=True)
 
 
+def brake_history_context(entries: list[dict], model_year: int | None,
+                          check_date: datetime.date, current_odometer: int) -> dict:
+    """Validate brake-pad replacements without calculating their service intervals.
+    The AI receives the valid replacement records later and calculates the pattern."""
+    clean = []
+    unreliable = None
+    earliest = datetime.date(model_year, 1, 1) if model_year is not None else None
+
+    for entry in entries:
+        if entry.get("part_name") != "Brake Pads":
+            continue
+        date = to_date(entry.get("service_date"))
+        odometer = entry.get("service_odometer")
+        if (date is None or date > check_date or (earliest is not None and date < earliest)
+                or not isinstance(odometer, int) or isinstance(odometer, bool)
+                or odometer < 0 or odometer > current_odometer):
+            unreliable = unreliable or "Brake-pad history contains invalid dates or odometer readings."
+            continue
+        if entry.get("service_action") not in (None, "unknown", "inspect", "replace"):
+            unreliable = unreliable or "Brake-pad history contains an invalid performed action."
+            continue
+        clean.append(entry)
+
+    replacements = []
+    seen = set()
+    for entry in clean:
+        date = entry["service_date"]
+        odometer = entry["service_odometer"]
+        problem = (check_service_odometer(clean, date, odometer)
+                   or check_service_pace(clean, date, odometer, model_year)
+                   or km_pace_problem(date, odometer, check_date, current_odometer))
+        if problem is not None:
+            unreliable = unreliable or problem
+            continue
+        if entry.get("service_action") == "replace":
+            key = (date, odometer)
+            if key not in seen:
+                seen.add(key)
+                replacements.append({
+                    "service_date": date,
+                    "service_odometer": odometer,
+                    "service_action": "replace",
+                })
+
+    replacements = sorted(replacements, key=lambda item: (to_date(item["service_date"]),
+                                                            item["service_odometer"]))
+    count = len(replacements)
+    reason = unreliable or ("" if count >= 3 else
+                            "At least three distinct confirmed replacements are needed.")
+    return {
+        "eligible": count >= 3 and unreliable is None,
+        "replacement_count": count,
+        "reason": reason,
+        "replacement_records": replacements,
+    }
+
+
 def latest_service(entries: list[dict], part_name: str,
-                   scheduled_action: str | None = None) -> dict | None:
+                   scheduled_action: str | None = None,
+                   model_year: int | None = None) -> dict | None:
     """Return the most recent service of this part, or None if it has never been
     logged. This is the "last service" that an urgency check is based on."""
     for entry in sort_history(entries):
-        if entry.get("part_name") == part_name and to_date(entry.get("service_date")):
+        service_date = to_date(entry.get("service_date"))
+        odometer = entry.get("service_odometer")
+        if (entry.get("part_name") == part_name and service_date
+                and service_date <= datetime.date.today()
+                and (model_year is None or service_date >= datetime.date(model_year, 1, 1))
+                and isinstance(odometer, int) and not isinstance(odometer, bool) and odometer >= 0):
             action = entry.get("service_action")
             if scheduled_action is not None and action not in (None, "unknown", "replace", scheduled_action):
                 continue
