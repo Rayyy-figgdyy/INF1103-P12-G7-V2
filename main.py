@@ -1,16 +1,6 @@
-"""
-main.py -- entry point of the Car Maintenance & Service Risk Tracker.
-Run it with: python main.py
-
-Shows the menu, handles login, profile CRUD and maintenance history CRUD, and runs
-each urgency check through the pipeline:
-    io_manager -> ai_manager -> logic_manager -> data_manager.
-An urgency check is based on the latest service of that part in the owner's
-maintenance history; identical checks are answered from prompt_records.json.
-main.py is the only file that talks to all four managers; they never call each other.
-Procedural only (C1: no classes); the logged-in user lives in main() as current_user.
-
-"""
+# main.py -- Car Maintenance & Service Risk Tracker. Run with: python main.py
+# Coordinate profiles, service history and maintenance assessments.
+# Only main.py connects the four managers; input and output stay in io_manager.py.
 
 import datetime
 import logging
@@ -22,57 +12,54 @@ import logic_manager
 
 
 # ======================================================================
-# THE PIPELINE: one maintenance check, from start to finish
+# PIPELINE AND SHARED HELPERS
 # ======================================================================
 
+# Run one maintenance check through AI, then apply deterministic business rules.
 def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
-    """Run one check through the AI, then our business rules.
-    Returns the finished record with facts, risk_score and outcome added."""
-    # C2: every check goes through the AI. Eligible Brake Pad history is combined with
-    # the manual inside this one AI assessment, producing one urgency_score.
-    enriched = ai_manager.process(raw_record, manual_path=manual_path)
+    # AI combines the manual and any eligible Brake Pad history into one urgency score.
+    ai_result = ai_manager.process(raw_record, manual_path=manual_path)
+    final_record = dict(ai_result)
 
-    # Add our own facts: km/days since service, overdue flags, service-by date.
-    final_record = dict(enriched)
-    final_record.update(logic_manager.evaluate(enriched))
-
-    # score() is only used to sort the urgent list; route() makes the decision.
+    final_record.update(logic_manager.evaluate(final_record))
     final_record["risk_score"] = logic_manager.score(final_record)
     final_record["outcome"] = logic_manager.route(final_record)
     return final_record
 
 
+# Return the earliest service date, or None when the model year is unknown.
 def earliest_service_date(user: dict) -> datetime.date | None:
-    """Return 1 January of the car's model year (e.g. 01-01-2020 for a 2020 model):
-    no service can be dated before the car was made. None if the year is unknown."""
-    year = data_manager.get_model_year(user["car_model"])
-    if year is None:
+    model_year = data_manager.get_model_year(user["car_model"])
+    if model_year is None:
         return None
-    return datetime.date(year, 1, 1)
+    return datetime.date(model_year, 1, 1)  # The exact build date is unknown.
 
 
+# Return the first mileage problem, or None when the service fits the history.
 def service_problem(user: dict, entries: list[dict], service_date: str, odometer: int,
                     ignore_id: int | None = None) -> str | None:
-    """Run the history rules on one service: the odometer can't go backwards
-    (business rule 1) and can't grow faster than logic_manager.MAX_KM_PER_DAY.
-    Returns the first problem found, or None if the service fits."""
+    problem = logic_manager.check_service_odometer(
+        entries, service_date, odometer, ignore_id
+    )
+    if problem is not None:
+        return problem
+
     model_year = data_manager.get_model_year(user["car_model"])
-    return (logic_manager.check_service_odometer(entries, service_date, odometer, ignore_id)
-            or logic_manager.check_service_pace(entries, service_date, odometer,
-                                                model_year, ignore_id))
+    return logic_manager.check_service_pace(
+        entries, service_date, odometer, model_year, ignore_id
+    )
 
 
+# Return the allowed COE expiry date range for the car.
 def coe_limits(car_model: str) -> tuple:
-    """The allowed COE expiry range for this car: (earliest, latest) dates."""
-    return logic_manager.coe_date_range(data_manager.get_model_year(car_model),
-                                        datetime.date.today())
+    model_year = data_manager.get_model_year(car_model)
+    return logic_manager.coe_date_range(model_year, datetime.date.today())
 
 
+# Return the highest odometer reading already saved for the car.
 def last_odometer_on_file(license_plate: str) -> int | None:
-    """Return the highest odometer reading saved for this car, from its AI checks
-    and its maintenance history together, or None if there is none."""
-    all_saved = data_manager.load() + data_manager.load_history()
-    return data_manager.get_last_odometer(all_saved, license_plate)
+    saved_records = data_manager.load() + data_manager.load_history()
+    return data_manager.get_last_odometer(saved_records, license_plate)
 
 
 # ======================================================================
@@ -522,167 +509,207 @@ def urgent_flow(user: dict) -> None:
 
 
 # ======================================================================
-# ACCOUNTS: log in, and Create / Read / Update / Delete a profile ("CRUD")
+# ACCOUNTS: login and profile CRUD
 # ======================================================================
 
+# Find the profile for a licence plate, or return None if it is not registered.
 def login_flow() -> dict | None:
-    """Log in by license plate.
-    Returns the user's profile, or None if no profile has that plate."""
     plate = io_manager.prompt_login()
     user = data_manager.find_user_by_plate(plate)
+
     if user is None:
-        io_manager.display_message(f"No profile for {plate}. Choose 'Register new profile' first.")
+        io_manager.display_message(
+            f"No profile for {plate}. Choose 'Register new profile' first."
+        )
         return None
+
     io_manager.display_message(f"\nWelcome back, {user['name']}!")
     return user
 
 
+# Create and return a new profile, or None if registration cannot be completed.
 def register_flow() -> dict | None:
-    """CREATE a new profile and log the user in.
-    Returns the new profile, or None if the car list is missing or saving failed."""
     car_models = data_manager.list_car_models()
     if not car_models:
-        io_manager.display_message("The car list (data/cars.json) is missing, so you can't register yet.")
+        io_manager.display_message(
+            "The car list (data/cars.json) is missing, so you can't register yet."
+        )
         return None
 
-    # The license plate is the account ID, so io_manager must refuse duplicates.
-    taken_plates = {u.get("license_plate") for u in data_manager.load_users()}
+    taken_plates = {
+        user.get("license_plate")
+        for user in data_manager.load_users()
+    }
 
     identity = io_manager.prompt_identity(taken_plates)
     car_model = io_manager.prompt_car_choice(car_models)
+    car = data_manager.find_car(car_model)
+    earliest_coe, latest_coe = coe_limits(car_model)
 
     profile = {
         "name": identity["name"],
         "license_plate": identity["license_plate"],
         "car_model": car_model,
-        # Brand New / Used comes from cars.json, not from the user.
-        "car_condition": data_manager.find_car(car_model)["condition"],
-        "coe_expiry_date": io_manager.prompt_coe_expiry(*coe_limits(car_model)),
+        "car_condition": car["condition"],
+        "coe_expiry_date": io_manager.prompt_coe_expiry(
+            earliest_coe, latest_coe
+        ),
     }
 
     if not data_manager.save_user(profile):
         io_manager.display_message("Could not save your profile. Please try again.")
         return None
+
     io_manager.display_message("\nProfile created -- you are now logged in.")
     io_manager.display_user(profile)
     return profile
 
 
+# Update the name or COE date, keeping the old profile if saving fails.
 def update_profile_flow(user: dict) -> dict:
-    """UPDATE the user's name or COE expiry date (plate and car are fixed).
-    Returns the updated profile, or the unchanged one if saving failed."""
-    updated = io_manager.prompt_updated_profile(user, *coe_limits(user["car_model"]))
-    if not data_manager.save_user(updated):
+    earliest_coe, latest_coe = coe_limits(user["car_model"])
+    updated_profile = io_manager.prompt_updated_profile(
+        user, earliest_coe, latest_coe
+    )
+
+    if not data_manager.save_user(updated_profile):
         io_manager.display_message("Could not save your changes. Please try again.")
         return user
+
     io_manager.display_message("\nProfile updated.")
-    io_manager.display_user(updated)
-    return updated
+    io_manager.display_user(updated_profile)
+    return updated_profile
 
 
+# Delete a confirmed profile and all records linked to its licence plate.
 def delete_profile_flow(user: dict) -> dict | None:
-    """DELETE the profile, its maintenance history and its saved checks, after a y/n
-    confirmation. Returns None if deleted (logs the user out), else the same user."""
     plate = user["license_plate"]
     service_count = len(data_manager.history_for_plate(plate))
-    check_count = len(data_manager.query(lambda r: r.get("license_plate") == plate))
+    check_count = len(
+        data_manager.query(lambda record: record.get("license_plate") == plate)
+    )
 
-    question = (f"Permanently delete {plate}, its {service_count} service(s) and "
-                f"{check_count} urgency check(s)?")
+    question = (
+        f"Permanently delete {plate}, its {service_count} service(s) and "
+        f"{check_count} urgency check(s)?"
+    )
     if not io_manager.confirm_action(question):
         io_manager.display_message("Delete cancelled.")
         return user
 
-    # Only remove the car's checks once the profile itself is gone.
     if not data_manager.delete_user(plate):
         io_manager.display_message("Could not delete the profile. Please try again.")
         return user
+
     data_manager.delete_history_for_plate(plate)
     data_manager.delete_records_for_plate(plate)
-    io_manager.display_message("Profile, history and checks deleted. You have been logged out.")
+    io_manager.display_message(
+        "Profile, history and checks deleted. You have been logged out."
+    )
     return None
 
 
 # ======================================================================
-# THE MAIN LOOP: show the menu, do what the user picks, repeat
+# MAIN MENU
 # ======================================================================
 
+# Hide minor Google library notices while keeping errors visible.
 def hide_google_notices(record: logging.LogRecord) -> bool:
-    """Log filter: hide Google AI library warnings that clutter the screen.
-    Returns False (hide) only for google_genai messages below ERROR level."""
     from_google = record.name.startswith("google_genai")
     is_minor = record.levelno < logging.ERROR
     return not (from_google and is_minor)
 
 
+# Handle one logged-out menu choice and return the user plus exit request.
+def handle_logged_out_choice(choice: str) -> tuple:
+    current_user = None
+    should_exit = False
+
+    if choice == "1":
+        current_user = login_flow()
+    elif choice == "2":
+        current_user = register_flow()
+    elif choice == "3":
+        io_manager.display_message("Goodbye!")
+        should_exit = True
+    else:
+        io_manager.display_message(
+            "Invalid choice. Please enter a number from the menu."
+        )
+
+    return current_user, should_exit
+
+
+# Handle one logged-in menu choice and return the user plus exit request.
+def handle_logged_in_choice(choice: str, current_user: dict) -> tuple:
+    should_exit = False
+
+    if choice == "1":
+        add_service_flow(current_user)
+    elif choice == "2":
+        history_flow(current_user)
+    elif choice == "3":
+        edit_service_flow(current_user)
+    elif choice == "4":
+        delete_service_flow(current_user)
+    elif choice == "5":
+        check_part_flow(current_user)
+    elif choice == "6":
+        urgent_flow(current_user)
+    elif choice == "7":
+        io_manager.display_user(current_user)
+    elif choice == "8":
+        current_user = update_profile_flow(current_user)
+    elif choice == "9":
+        current_user = delete_profile_flow(current_user)
+    elif choice == "10":
+        io_manager.display_message(f"Logged out {current_user['name']}.")
+        current_user = None
+    elif choice == "11":
+        io_manager.display_message("Goodbye!")
+        should_exit = True
+    else:
+        io_manager.display_message(
+            "Invalid choice. Please enter a number from the menu."
+        )
+
+    if choice in ("1", "2", "3", "4", "5", "6", "7"):
+        io_manager.wait_for_enter()
+
+    return current_user, should_exit
+
+
+# Run the menus until the user exits.
 def main() -> None:
-    """Run the app: set up logging, then show the menu and handle choices until Exit.
-    Returns nothing."""
-    # Only io_manager may print(), so the other managers report problems via logging.
-    logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="[%(levelname)s] %(name)s: %(message)s",
+    )
     for handler in logging.getLogger().handlers:
         handler.addFilter(hide_google_notices)
 
-    # The logged-in profile is passed to each flow; no global variables.
-    current_user = None   # None = logged out
+    current_user = None
 
     try:
         while True:
             choice = io_manager.prompt_main_menu(current_user)
 
             if current_user is None:
-                # ---------- Logged-out menu ----------
-                if choice == "1":
-                    current_user = login_flow()
-                elif choice == "2":
-                    current_user = register_flow()
-                elif choice == "3":
-                    io_manager.display_message("Goodbye!")
-                    break
-                else:
-                    io_manager.display_message("Invalid choice. Please enter a number from the menu.")
+                current_user, should_exit = handle_logged_out_choice(choice)
             else:
-                # ---------- Logged-in menu ----------
-                # Options 1-7 pause so results aren't pushed off screen by the menu.
-                if choice == "1":
-                    add_service_flow(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "2":
-                    history_flow(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "3":
-                    edit_service_flow(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "4":
-                    delete_service_flow(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "5":
-                    check_part_flow(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "6":
-                    urgent_flow(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "7":
-                    io_manager.display_user(current_user)
-                    io_manager.wait_for_enter()
-                elif choice == "8":
-                    current_user = update_profile_flow(current_user)
-                elif choice == "9":
-                    current_user = delete_profile_flow(current_user)   # None = logged out
-                elif choice == "10":
-                    io_manager.display_message(f"Logged out {current_user['name']}.")
-                    current_user = None
-                elif choice == "11":
-                    io_manager.display_message("Goodbye!")
-                    break
-                else:
-                    io_manager.display_message("Invalid choice. Please enter a number from the menu.")
+                current_user, should_exit = handle_logged_in_choice(
+                    choice, current_user
+                )
+
+            if should_exit:
+                break
 
     except (KeyboardInterrupt, EOFError):
-        # Ctrl+C, or no keyboard attached (e.g. Docker run without -it): exit politely.
-        io_manager.display_message("\nExiting. (If you're using Docker, run with: docker run -it ...)")
+        io_manager.display_message(
+            "\nExiting. (If you're using Docker, run with: docker run -it ...)"
+        )
 
 
-# Start the app only when run directly, not when the tests import this file.
+# Start the app only when run directly, not when tests import this file.
 if __name__ == "__main__":
     main()
