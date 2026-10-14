@@ -104,9 +104,11 @@ def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
     # check looks up the last service of one part at a time.
     saved_entries = []
     for name in invoice["part_names"]:
-        # The same part, date and odometer already saved = the same invoice typed twice.
-        if logic_manager.find_duplicate_service(history, name, invoice["service_date"],
-                                                invoice["service_odometer"]) is not None:
+        service_action = invoice["service_actions"][name]
+        # Match the action so an inspection and a replacement remain separate entries.
+        if logic_manager.find_duplicate_service(
+                history, name, invoice["service_date"], invoice["service_odometer"],
+                service_action=service_action) is not None:
             io_manager.display_message(f"  -> {name} on {invoice['service_date']} at "
                                        f"{invoice['service_odometer']:,} km is already in your "
                                        "history, so it was not added again.")
@@ -114,6 +116,7 @@ def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
         entry = {
             "license_plate": user["license_plate"],
             "part_name": name,
+            "service_action": service_action,
             "service_date": invoice["service_date"],
             "service_odometer": invoice["service_odometer"],
             "notes": invoice["notes"],
@@ -173,7 +176,8 @@ def edit_service_flow(user: dict) -> None:
                               updated["service_odometer"], chosen.get("service_id"))
     if problem is None and logic_manager.find_duplicate_service(
             entries, updated["part_name"], updated["service_date"],
-            updated["service_odometer"], chosen.get("service_id")) is not None:
+            updated["service_odometer"], chosen.get("service_id"),
+            service_action=updated.get("service_action") or "unknown") is not None:
         problem = "That would be an exact copy of a service already in your history."
     if problem is not None:
         io_manager.display_message(f"  -> {problem}\nNothing was changed.")
@@ -235,7 +239,9 @@ def check_part_flow(user: dict) -> None:
 
     # The "last service" comes from the maintenance history, not from typing it again.
     history = data_manager.history_for_plate(user["license_plate"])
-    last_service = logic_manager.latest_service(history, part_name)
+    last_service = logic_manager.latest_service(
+        history, part_name, interval.get("action", "replace")
+    )
     from_new = False
     if last_service is None:
         io_manager.display_message(f"\nThere is no {part_name} service in your maintenance history yet.")
@@ -252,8 +258,16 @@ def check_part_flow(user: dict) -> None:
             new_entries = save_new_services(user, part_name)
             if not new_entries:
                 return
-            last_service = new_entries[0]
             history = data_manager.history_for_plate(user["license_plate"])
+            last_service = logic_manager.latest_service(
+                history, part_name, interval.get("action", "replace")
+            )
+            if last_service is None:
+                io_manager.display_message(
+                    "The entry was saved, but an inspection does not reset this service interval. "
+                    "Record the last replacement or rotation before checking this part."
+                )
+                return
 
     if from_new:
         io_manager.display_message(f"\nChecking your {part_name} from new "
@@ -290,6 +304,7 @@ def check_part_flow(user: dict) -> None:
         "service_id": last_service.get("service_id"),
         "last_service_date": last_service["service_date"],
         "last_service_mileage": last_service["service_odometer"],
+        "last_service_action": last_service.get("service_action") or "unknown",
         "current_odometer": current_odometer,
     }
     raw_record.update(chosen_interval)   # interval_km, interval_months, action, interval_stage

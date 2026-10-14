@@ -90,3 +90,10 @@ def test_schedule_text_shows_the_manual_action_and_stage():
     assert io_manager.schedule_text({"interval_km": 40000, "interval_months": 24, "action": "replace",
                                      "interval_stage": "repeat"}) \
         == "replace every 40,000 km or 24 months (after the first change)"
+
+
+def test_service_action_allows_rotate_only_for_tyres(monkeypatch):
+    replies = iter(["2", "3"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
+    assert io_manager.prompt_service_action("Brake Pads") == "replace"
+    assert io_manager.prompt_service_action("Tyres") == "rotate"

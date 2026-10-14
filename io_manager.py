@@ -360,12 +360,37 @@ def prompt_current_odometer(last_service_km: int, last_known_odometer: int | Non
 # MAINTENANCE HISTORY QUESTIONS (add, choose, edit)
 # ======================================================================
 
+def prompt_service_action(part_name: str, current_action: str | None = None,
+                          allow_keep: bool = False) -> str | None:
+    """Ask what was done to one part. Enter preserves an old action only when
+    editing; returning None also leaves an old missing action unknown."""
+    actions = ["inspect", "replace"]
+    if part_name == "Tyres":
+        actions.append("rotate")
+    print(f"\nWhat was done to {part_name}?")
+    for number, action in enumerate(actions, start=1):
+        print(f"  {number:>2}) {action}")
+    label = "Action number"
+    if allow_keep:
+        label += f" [{current_action or 'unknown'}] (Enter keeps it)"
+    while True:
+        typed = input(f"{label}: ").strip()
+        if not typed and allow_keep:
+            if current_action == "rotate" and part_name != "Tyres":
+                print("  -> Rotation is only allowed for Tyres. Choose the action for this part.")
+            else:
+                return None
+        elif typed.isdigit() and 1 <= int(typed) <= len(actions):
+            return actions[int(typed) - 1]
+        else:
+            print(f"  -> Please enter a number from 1 to {len(actions)}.")
+
+
 def prompt_service_entry(parts: list[str], part_name: str | None = None,
                          earliest: datetime.date | None = None) -> dict:
-    """Ask for one workshop invoice: the part(s) serviced, then the date, odometer and
-    an optional note, typed once for the whole invoice. part_name skips the part
-    question when it is already known; earliest is the first allowed service date.
-    Returns {"part_names": [...], "service_date", "service_odometer", "notes"}."""
+    """Ask for each part's performed action, plus one shared date, odometer and note.
+    part_name skips the part question; earliest is the first allowed service date.
+    Returns part_names, service_actions by part, service_date, service_odometer and notes."""
     print("\n--- Add an invoice (from your workshop invoice) ---")
     if part_name is None:
         print("Which parts were serviced on this invoice?")
@@ -373,10 +398,13 @@ def prompt_service_entry(parts: list[str], part_name: str | None = None,
     else:
         print(f"Part: {part_name}")
         part_names = [part_name]
+    service_actions = {}
+    for name in part_names:
+        service_actions[name] = prompt_service_action(name)
     service_date = prompt_past_date("Service date", earliest)
     service_odometer = prompt_km("Odometer at service (km)")
     notes = input("Workshop / notes (optional, press Enter to skip): ").strip()
-    return {"part_names": part_names, "service_date": service_date,
+    return {"part_names": part_names, "service_actions": service_actions, "service_date": service_date,
             "service_odometer": service_odometer, "notes": notes}
 
 
@@ -387,6 +415,7 @@ def prompt_service_choice(entries: list[dict], action: str) -> dict | None:
     for number, entry in enumerate(entries, start=1):
         print(f"  {number:>2}) {show_date(entry.get('service_date'))}  "
               f"{str(entry.get('part_name')):<18} {km(entry.get('service_odometer')):>9} km  "
+              f"{str(entry.get('service_action') or 'unknown'):<8}  "
               f"{entry.get('notes') or ''}")
     while True:
         typed = input("Service number: ").strip()
@@ -399,7 +428,7 @@ def prompt_service_choice(entries: list[dict], action: str) -> dict | None:
 
 def prompt_updated_service(current: dict, parts: list[str],
                            earliest: datetime.date | None = None) -> dict:
-    """Let the user change a service's part, date, odometer and note (Enter keeps the
+    """Let the user change a service's part, action, date, odometer and note (Enter keeps the
     old value); a new date can't be before `earliest`.
     Returns an updated copy; main.py checks it and saves it."""
     print("\n--- Edit service (press Enter to keep the current value) ---")
@@ -414,6 +443,11 @@ def prompt_updated_service(current: dict, parts: list[str],
             updated["part_name"] = parts[int(typed) - 1]
             break
         print(f"  -> Enter a number from 1 to {len(parts)}, or press Enter to keep.")
+
+    action = prompt_service_action(updated.get("part_name"), current.get("service_action"),
+                                   allow_keep=True)
+    if action is not None:
+        updated["service_action"] = action
 
     while True:
         typed = input(f"Service date ({DATE_HINT}) [{show_date(current.get('service_date'))}]: ").strip()
@@ -541,7 +575,8 @@ def display_repeated(previous: dict) -> None:
 def display_service(entry: dict) -> None:
     """Print one service entry, e.g. after it has been added or edited."""
     print(f"  {show_date(entry.get('service_date'))}  {str(entry.get('part_name')):<18} at "
-          f"{km(entry.get('service_odometer')):>9} km  {entry.get('notes') or ''}")
+          f"{km(entry.get('service_odometer')):>9} km  "
+          f"{entry.get('service_action') or 'unknown'}  {entry.get('notes') or ''}")
 
 
 def display_history(entries: list[dict]) -> None:
@@ -550,7 +585,7 @@ def display_history(entries: list[dict]) -> None:
     if not entries:
         print("\nNo services in your history yet.")
         return
-    print(f"\n{'Serviced':<12}{'Part':<19}{'Odometer':>10}  {'Urgency':<8}{'Checked':<12}"
+    print(f"\n{'Serviced':<12}{'Part':<19}{'Action':<10}{'Odometer':>10}  {'Urgency':<8}{'Checked':<12}"
           f"{'Outcome':<34}Notes")
     for entry in entries:
         check = entry.get("latest_check")
@@ -563,6 +598,7 @@ def display_history(entries: list[dict]) -> None:
             outcome = str(check.get("outcome")).split(" - ")[0]   # e.g. "URGENT"
         print(f"{show_date(entry.get('service_date')):<12}"
               f"{str(entry.get('part_name'))[:18]:<19}"
+              f"{str(entry.get('service_action') or 'unknown'):<10}"
               f"{km(entry.get('service_odometer')):>10}  "
               f"{urgency_text:<8}{checked:<12}{outcome[:33]:<34}"
               f"{entry.get('notes') or ''}")

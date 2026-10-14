@@ -286,11 +286,15 @@ def sort_history(entries: list[dict]) -> list[dict]:
     return sorted(entries, key=service_sort_key, reverse=True)
 
 
-def latest_service(entries: list[dict], part_name: str) -> dict | None:
+def latest_service(entries: list[dict], part_name: str,
+                   scheduled_action: str | None = None) -> dict | None:
     """Return the most recent service of this part, or None if it has never been
     logged. This is the "last service" that an urgency check is based on."""
     for entry in sort_history(entries):
         if entry.get("part_name") == part_name and to_date(entry.get("service_date")):
+            action = entry.get("service_action")
+            if scheduled_action is not None and action not in (None, "unknown", "replace", scheduled_action):
+                continue
             return entry
     return None
 
@@ -433,14 +437,19 @@ def latest_reading(entries: list[dict], checks: list[dict]) -> tuple | None:
 
 
 def find_duplicate_service(entries: list[dict], part_name: str, service_date: str,
-                           odometer: int, ignore_id: int | None = None) -> dict | None:
+                           odometer: int, ignore_id: int | None = None,
+                           service_action: str | None = None) -> dict | None:
     """Return an existing entry with the same part, date and odometer (the same service
-    typed twice), or None. ignore_id skips the entry being edited."""
+    typed twice), or None. Compare the performed action when supplied;
+    ignore_id skips the entry being edited."""
     for entry in entries:
         if ignore_id is not None and entry.get("service_id") == ignore_id:
             continue
         if (entry.get("part_name") == part_name and entry.get("service_date") == service_date
                 and entry.get("service_odometer") == odometer):
+            # An inspection and a replacement on one date are different services.
+            if service_action is not None and (entry.get("service_action") or "unknown") != service_action:
+                continue
             return entry
     return None
 
@@ -453,14 +462,17 @@ def find_duplicate_service(entries: list[dict], part_name: str, service_date: st
 def choose_interval(rule: dict, part_services: list[dict]) -> dict:
     """Pick the interval that applies to the next service of a part. When the manual
     says 'first at X, then every Y' (rule has repeat_km/repeat_months) and this part
-    has already been replaced at least once (part_services is not empty), the repeat
+    has already been replaced at least once, the repeat
     interval Y applies; otherwise the first interval X does.
     Returns {"interval_km", "interval_months", "action", "interval_stage"}, where
     interval_stage is "first", "repeat" or None (the manual has only one interval)."""
     chosen = {"interval_km": rule["interval_km"], "interval_months": rule["interval_months"],
               "action": rule.get("action", "replace"), "interval_stage": None}
     if "repeat_km" in rule:
-        if part_services:
+        # Keep legacy records usable, but an explicit inspection is not a replacement.
+        replacement_logged = any(service.get("service_action") in (None, "unknown", "replace")
+                                 for service in part_services)
+        if replacement_logged:
             chosen["interval_km"] = rule["repeat_km"]
             chosen["interval_months"] = rule["repeat_months"]
             chosen["interval_stage"] = "repeat"

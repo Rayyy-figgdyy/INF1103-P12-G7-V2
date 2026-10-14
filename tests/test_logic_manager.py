@@ -317,3 +317,11 @@ def test_overdue_safety_inspection_is_worded_as_an_inspection():
     record = sample_record(part_name="Tyres", action="rotate", urgency_score=3,
                            last_service_date="01-10-2025")
     assert logic_manager.route(record) == "URGENT - Safety-critical tyre rotation overdue"
+
+
+def test_service_action_keeps_inspection_and_replacement_separate():
+    entries = [{"part_name": "Brake Pads", "service_date": "01-01-2026",
+                "service_odometer": 50000, "service_action": "inspect"}]
+    assert logic_manager.find_duplicate_service(
+        entries, "Brake Pads", "01-01-2026", 50000, service_action="replace"
+    ) is None
