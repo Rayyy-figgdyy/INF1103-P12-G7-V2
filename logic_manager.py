@@ -542,8 +542,9 @@ def max_plausible_odometer(last_date, last_km: int, today: datetime.date) -> int
 
 
 def latest_reading(entries: list[dict], checks: list[dict]) -> tuple | None:
-    """The car's highest odometer reading on file and its date, from service entries
-    and AI checks together. Returns (date_text, km) or None if there is none."""
+    """Find the car's highest odometer reading on file and its date, looking at both
+    the service history and the AI checks. Gives back (date_text, km), or None if
+    there are no readings yet."""
     readings = []
     for entry in entries:
         if isinstance(entry.get("service_odometer"), int) and to_date(entry.get("service_date")):
@@ -560,9 +561,9 @@ def latest_reading(entries: list[dict], checks: list[dict]) -> tuple | None:
 def find_duplicate_service(entries: list[dict], part_name: str, service_date: str,
                            odometer: int, ignore_id: int | None = None,
                            service_action: str | None = None) -> dict | None:
-    """Return an existing entry with the same part, date and odometer (the same service
-    typed twice), or None. Compare the performed action when supplied;
-    ignore_id skips the entry being edited."""
+    """Look for an existing entry with the same part, date and odometer, which means
+    the same service was typed in twice. If service_action is given, it has to match
+    too. ignore_id skips the entry being edited. Gives back the match, or None."""
     for entry in entries:
         if ignore_id is not None and entry.get("service_id") == ignore_id:
             continue
@@ -581,12 +582,9 @@ def find_duplicate_service(entries: list[dict], part_name: str, service_date: st
 # ======================================================================
 
 def choose_interval(rule: dict, part_services: list[dict]) -> dict:
-    """Pick the interval that applies to the next service of a part. When the manual
-    says 'first at X, then every Y' (rule has repeat_km/repeat_months) and this part
-    has already been replaced at least once, the repeat
-    interval Y applies; otherwise the first interval X does.
-    Returns {"interval_km", "interval_months", "action", "interval_stage"}, where
-    interval_stage is "first", "repeat" or None (the manual has only one interval)."""
+    """Picks an interval according to the manual. Some manuals have a first change
+    interval and another interval for subsequent changes. This checks which one is 
+    applicable."""
     chosen = {"interval_km": rule["interval_km"], "interval_months": rule["interval_months"],
               "action": rule.get("action", "replace"), "interval_stage": None}
     if "repeat_km" in rule:
@@ -603,9 +601,10 @@ def choose_interval(rule: dict, part_services: list[dict]) -> dict:
 
 
 def from_new_service(part_name: str, model_year: int) -> dict:
-    """A stand-in "last service" for a part that has never been replaced: the car as
-    new, at 0 km on 1 January of its model year (the earliest date it can have been
-    made). Used for first-change checks such as coolant. It is not saved."""
+    """A stand-in "last service" for a part that has never been replaced, so we can
+    count from when the car was new: 0 km on 1 January of its model year (if exact build date 
+    is unknown). Used for first-change checks such as coolant.
+    It is never saved to the history."""
     return {"service_id": None, "part_name": part_name,
             "service_date": f"01-01-{model_year}", "service_odometer": 0,
             "notes": "from new (never replaced)"}
