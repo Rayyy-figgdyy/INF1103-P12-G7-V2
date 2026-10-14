@@ -10,6 +10,8 @@ is the backup; if both fail, FALLBACK_ASSESSMENT -> "NEEDS MANUAL REVIEW".
 
 No business rules here, and errors go to the log, never print().
 """
+
+# Import modules
 import json
 import logging
 import os
@@ -22,33 +24,25 @@ from groq import Groq
 
 logger = logging.getLogger("ai_manager")
 
-# ======================================================================
-# FIXED SETTINGS
-# ======================================================================
-
-# Either model can be overridden with GEMINI_MODEL / GROQ_MODEL in .env.
+# Default AI models and time limits
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 API_TIMEOUT_SECONDS = 60
-RETRY_DELAY_SECONDS = 3      # pause before retrying when neither AI replied
+RETRY_DELAY_SECONDS = 3      # pause before retrying when no response
 
+# Request consistent JSON responses from Gemini
 GEMINI_CONFIG = {
-    # C4: temperature 0 reduces response variability; repeated saved checks reuse stored results.
-    "temperature": 0,
-    # C3: ask for a JSON-only reply so parse_response() can read it.
-    "response_mime_type": "application/json",
-    # The SDK can run our Python functions for the AI; we pass none, so it is
-    # switched off and the AI only answers the question.
-    "automatic_function_calling": {"disable": True},
+    
+    "temperature": 0,                                       # temperature 0 reduces response variability
+    "response_mime_type": "application/json",               # JSON-only reply so parse_response() can read
+    "automatic_function_calling": {"disable": True},        # AI only answers the question
 }
 
-# Groq's free tier rejects oversized requests (error 413, about 8,000 tokens),
-# so Groq gets only the manual lines about the part, capped at this many characters.
+# Groq error 413, limit manual text sent to Groq
 MAX_MANUAL_CHARS = 8_000
 GROQ_MAX_ANSWER_TOKENS = 2048
 
-# What each part is called in our manuals (US-style ones say "tire", "air cleaner").
-# Used in the prompt and to find the relevant manual lines for Groq.
+# Find the relevant alternative names for car parts in the manual
 PART_SEARCH_WORDS = {
     "Engine Oil":        ["engine oil", "oil filter", "oil and filter"],
     "Brake Pads":        ["brake pad", "brake disc", "brakes"],
@@ -58,13 +52,11 @@ PART_SEARCH_WORDS = {
     "Coolant":           ["coolant", "cooling system"],
 }
 
-# C3: the JSON schema every AI answer must match (checked in validate_response).
-REQUIRED_KEYS = ("urgency_score", "confidence", "overdue_summary",
-                 "recommended_action", "manual_reference")
+# Required fields in each AI response
+REQUIRED_KEYS = ("urgency_score", "confidence", "overdue_summary", "recommended_action", "manual_reference")
 VALID_CONFIDENCE = ("High", "Medium", "Low")
 
-# Used when no AI gives a valid answer. ai_status != "ok" makes logic_manager.route
-# return "NEEDS MANUAL REVIEW", so the app carries on instead of crashing.
+# Result when both AI fail, instead of crashing
 FALLBACK_ASSESSMENT = {
     "urgency_score": None,
     "confidence": "Unknown",
@@ -75,11 +67,7 @@ FALLBACK_ASSESSMENT = {
     "ai_status": "unavailable",
 }
 
-
-# ======================================================================
-# CONNECTING TO THE TWO AI SERVICES
-# ======================================================================
-
+# Connect to AI using API keys
 def get_clients() -> tuple:
     """Create the Gemini and Groq clients from the API keys in .env.
     Returns (gemini, groq); either is None if its key is missing."""
@@ -89,7 +77,7 @@ def get_clients() -> tuple:
 
     gemini = None
     if gemini_key:
-        # Gemini takes its timeout in milliseconds; Groq (below) takes seconds.
+        # Gemini takes its timeout in milliseconds, Groq takes seconds.
         gemini = genai.Client(api_key=gemini_key,
                               http_options={"timeout": API_TIMEOUT_SECONDS * 1000})
     else:
@@ -103,13 +91,10 @@ def get_clients() -> tuple:
     return gemini, groq
 
 
-# ======================================================================
-# STEP 1: build_prompt
-# ======================================================================
-
+# Build fixed maintenance prompt format for AI
 def build_prompt(record: dict) -> str:
     """Build one AI prompt using the manual baseline and any eligible brake history."""
-    # The fixed urgency scale lines up with the thresholds in logic_manager.route.
+    # The fixed urgency scale lines up with the thresholds in logic_manager.route
     prompt = (
         "You are an automotive maintenance advisor in Singapore. The owner's "
         "manual for this car is attached. Use the manual as the authoritative "
@@ -192,30 +177,27 @@ def build_prompt(record: dict) -> str:
     return prompt
 
 
-# ======================================================================
-# STEP 2: call_api (Gemini first, then Groq as backup)
-# ======================================================================
-
+# Send prompt and PDF manual to Gemini
 def call_gemini(prompt: str, manual_path: str | None, client) -> str | None:
     """Send the prompt to Gemini with the manual PDF attached.
     Returns the reply text, or None on any error."""
     try:
         contents = [prompt]
         if manual_path:
-            # The PDF is uploaded and attached so Gemini can read the whole manual
-            # itself, and base its answer on this car's own service schedule.
+            # The PDF is uploaded for Gemini to read and base its answer on this car's manual
             uploaded_manual = client.files.upload(file=manual_path)
             contents = [uploaded_manual, prompt]
         model = os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
         response = client.models.generate_content(model=model, contents=contents, config=GEMINI_CONFIG)
         return response.text
+    
+    # Failure handling (timeout, no network, etc.) returns none, move to Groq
     except Exception as error:
-        # Any failure (no network, bad key, 503 busy, 429 rate limit, timeout) is
-        # logged and returns None, so ask_ai() moves on to the Groq backup.
         logger.error("Gemini call failed: %s", error)
         return None
 
 
+# Extract text from PDF manual
 def manual_text(manual_path: str) -> str:
     """Extract all text from the manual PDF (Groq cannot read PDF files).
     Returns the text, or "" if the PDF is unreadable or has no text layer."""
@@ -225,6 +207,8 @@ def manual_text(manual_path: str) -> str:
             for page in pdf.pages:
                 page_texts.append(page.extract_text() or "")
         text = "\n".join(page_texts).strip()
+
+    # Error handling
     except Exception as error:
         logger.error("Could not read text from %s: %s", manual_path, error)
         return ""
@@ -233,6 +217,7 @@ def manual_text(manual_path: str) -> str:
     return text
 
 
+# Find manual lines related to selected part
 def manual_excerpt(text: str, part_name: str) -> str:
     """Keep only the manual lines that mention the part (plus one line either side).
     Returns at most MAX_MANUAL_CHARS characters; uses the manual's start if no match."""
@@ -247,7 +232,7 @@ def manual_excerpt(text: str, part_name: str) -> str:
 
     lines = text.splitlines()
 
-    # Neighbouring lines are kept because schedule tables often wrap onto two lines.
+    # Neighbouring lines are kept because schedule tables often wrap onto two lines
     lines_to_keep = set()
     for line_number in range(len(lines)):
         line = lines[line_number].lower()
@@ -263,13 +248,14 @@ def manual_excerpt(text: str, part_name: str) -> str:
     excerpt = "\n".join(kept_lines)
     if not excerpt:
         excerpt = text
-    # Size cap: stops Groq's free tier refusing the request with error 413.
+    # Stop Groq refusing the request with error 413 
     if len(excerpt) > MAX_MANUAL_CHARS:
         logger.warning("Manual text cut to %d characters for the backup AI.", MAX_MANUAL_CHARS)
         excerpt = excerpt[:MAX_MANUAL_CHARS]
     return excerpt
 
 
+# Send relevant manual text to backup AI
 def call_groq(prompt: str, manual_path: str | None, client, part_name: str = "") -> str | None:
     """Send the prompt to Groq (backup AI) with a text excerpt of the manual in front.
     Returns the reply text, or None on any error."""
@@ -286,9 +272,9 @@ def call_groq(prompt: str, manual_path: str | None, client, part_name: str = "")
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": content}],
-            temperature=0,                                     # C4: repeatable answers
+            temperature=0,                                     # Repeatable answers
             max_completion_tokens=GROQ_MAX_ANSWER_TOKENS,
-            reasoning_effort="low",                            # stays within free-tier limits
+            reasoning_effort="low",                            # Keep response short
             stream=False,
         )
         return response.choices[0].message.content
@@ -296,15 +282,16 @@ def call_groq(prompt: str, manual_path: str | None, client, part_name: str = "")
         logger.error("Groq backup call failed: %s", error)
         return None
 
-
+# Prompt Gemini first, Groq if fail
 def ask_ai(prompt: str, manual_path: str | None, gemini, groq, part_name: str = "") -> tuple:
     """Ask Gemini first and fall back to Groq if Gemini gives no reply.
     Returns (reply text or None, "Gemini" / "Groq (backup)" / "none")."""
+    # Gemini
     if gemini is not None:
         reply = call_gemini(prompt, manual_path, gemini)
         if reply is not None:
             return reply, "Gemini"
-    # Backup: only reached if Gemini has no client or returned None.
+    # Back up Groq
     if groq is not None:
         logger.warning("Gemini unavailable -- trying the Groq backup.")
         reply = call_groq(prompt, manual_path, groq, part_name)
@@ -313,28 +300,25 @@ def ask_ai(prompt: str, manual_path: str | None, gemini, groq, part_name: str = 
     return None, "none"
 
 
+# Return raw AI output
 def call_api(prompt: str, manual_path: str | None = None, client=None, backup_client=None) -> str | None:
     """Send the prompt (and manual) to the AI; the brief's call_api step.
     Returns the raw reply text, or None if every AI failed.
     client/backup_client are only passed in by tests; normally they come from .env."""
-    # process() calls ask_ai() directly so it also learns which AI answered.
-    # No part name is passed here, so a Groq fallback gets the start of the manual.
+    # process() calls ask_ai() directly so it knows which AI answered
     if client is None and backup_client is None:
         client, backup_client = get_clients()
     reply, who_answered = ask_ai(prompt, manual_path, client, backup_client)
     return reply
 
 
-# ======================================================================
-# STEP 3: parse_response
-# ======================================================================
-
+# Convert AI reply into dictionary
 def parse_response(reply: str | None) -> dict | None:
     """Extract the JSON object from the AI's reply text.
     Returns it as a dictionary, or None if there is no readable JSON object."""
     if not reply or not reply.strip():
         return None
-    # Take the text from the first { to the last }, ignoring ```json fences or chatter.
+    # Take text from the first { to the last }
     start = reply.find("{")
     end = reply.rfind("}")
     if start == -1 or end < start:
@@ -342,6 +326,8 @@ def parse_response(reply: str | None) -> dict | None:
         return None
     try:
         data = json.loads(reply[start:end + 1])
+    
+    # Error handling
     except json.JSONDecodeError as error:
         logger.error("AI response is not valid JSON: %s", error)
         return None
@@ -350,10 +336,7 @@ def parse_response(reply: str | None) -> dict | None:
     return None
 
 
-# ======================================================================
-# STEP 4: validate_response
-# ======================================================================
-
+# Validate AI response
 def validate_response(data: dict | None, expect_history: bool = False) -> dict | None:
     """Validate one combined AI assessment before the rest of the app uses it."""
     if not isinstance(data, dict):
@@ -364,7 +347,7 @@ def validate_response(data: dict | None, expect_history: bool = False) -> dict |
             logger.error("AI response is missing %r: %s", key, data)
             return None
 
-    # urgency_score must be an int 1-10. A whole-number float is accepted.
+    # Urgency_score must be an int 1-10, whole number float is accepted
     score = data["urgency_score"]
     if isinstance(score, float) and score.is_integer():
         score = int(score)
@@ -391,7 +374,7 @@ def validate_response(data: dict | None, expect_history: bool = False) -> dict |
         "ai_status": "ok",
     }
 
-    # Eligible Brake Pad history is part of the same assessment, not a second different score.
+    # Eligible Brake Pad history is part of the same assessment, not a second different score
     if expect_history:
         pattern = data.get("history_pattern")
         if not isinstance(pattern, str) or not pattern.strip():
@@ -402,10 +385,7 @@ def validate_response(data: dict | None, expect_history: bool = False) -> dict |
     return answer
 
 
-# ======================================================================
-# process -- steps 1 to 4 for one check (called by main.py)
-# ======================================================================
-
+# Run AI check and return result
 def process(record: dict, manual_path: str | None = None, client=None,
             backup_client=None, max_attempts: int = 2) -> dict:
     """Run every new maintenance check through AI, validating each provider's reply.
@@ -420,7 +400,7 @@ def process(record: dict, manual_path: str | None = None, client=None,
                       and isinstance(history, list) and len(history) >= 3)
 
     for attempt in range(1, max_attempts + 1):
-        # Check Gemini first, then validate its JSON before accepting the answer.
+        # Check Gemini first, then validate its JSON before accepting the answer
         if client is not None:
             reply = call_gemini(prompt, manual_path, client)
             answer = validate_response(parse_response(reply), expect_history=expect_history)
@@ -430,8 +410,8 @@ def process(record: dict, manual_path: str | None = None, client=None,
                 result.update(answer)
                 return result
 
-        # Even if Gemini returns text, invalid JSON or missing fields mean failure.
-        # Groq gets its own chance to give a complete and valid response now.
+        # Even if Gemini returns text, invalid JSON or missing fields mean failure
+        # Groq gets to give a complete and valid response now
         if backup_client is not None:
             logger.warning("No valid Gemini assessment -- trying Groq backup.")
             reply = call_groq(prompt, manual_path, backup_client,
@@ -448,7 +428,7 @@ def process(record: dict, manual_path: str | None = None, client=None,
         if attempt < max_attempts:
             time.sleep(RETRY_DELAY_SECONDS)
 
-    # All AI responses failed, so deterministic routing requests manual review.
+    # All AI responses failed, so deterministic routing requests manual review
     result = dict(record)
     result.update(FALLBACK_ASSESSMENT)
     return result
