@@ -327,26 +327,23 @@ def test_service_action_keeps_inspection_and_replacement_separate():
     ) is None
 
 
-def test_brake_history_needs_three_confirmed_replacements():
+def test_brake_history_requires_enough_valid_replacements():
     entries = [
         {"part_name": "Brake Pads", "service_action": "replace", "service_date": date,
          "service_odometer": km}
         for date, km in (("01-01-2022", 20000), ("01-01-2024", 40000), ("01-01-2026", 60000))
     ]
-    eligible = logic_manager.brake_history_context(entries, 2020, datetime.date(2026, 10, 14), 70000)
-    assert eligible["eligible"] is True and eligible["replacement_count"] == 3
-    assert [item["service_odometer"] for item in eligible["replacement_records"]] == [20000, 40000, 60000]
+    context = logic_manager.brake_history_context(entries, 2020, datetime.date(2026, 10, 14), 70000)
+    assert context["eligible"] is True and context["replacement_count"] == 3
+    assert [item["service_odometer"] for item in context["replacement_records"]] == [20000, 40000, 60000]
     too_short = logic_manager.brake_history_context(entries[:2], 2020, datetime.date(2026, 10, 14), 70000)
     assert too_short["eligible"] is False
+    invalid = logic_manager.brake_history_context(
+        [{**entries[0], "service_odometer": 90000}], 2020, datetime.date(2026, 10, 14), 70000
+    )
+    assert invalid["eligible"] is False and invalid["reason"]
 
-
-def test_brake_history_rejects_invalid_reading():
-    entries = [{"part_name": "Brake Pads", "service_action": "replace",
-                "service_date": "01-01-2026", "service_odometer": 90000}]
-    context = logic_manager.brake_history_context(entries, 2020, datetime.date(2026, 10, 14), 70000)
-    assert context["eligible"] is False and context["reason"]
-
-def test_combined_brake_urgency_flows_through_normal_logic():
+def test_combined_brake_urgency_uses_the_normal_score_and_route_pipeline():
     record = sample_record(part_name="Brake Pads", urgency_score=8, confidence="High",
                            current_odometer=49_000)
     assert logic_manager.score(record) >= 80

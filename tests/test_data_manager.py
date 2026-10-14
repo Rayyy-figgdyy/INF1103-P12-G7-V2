@@ -522,33 +522,6 @@ def test_any_changed_repeat_field_is_not_a_repeat():
             ) is None, field
 
 
-def test_no_history_means_no_repeat():
-    with temp_data_files():
-        assert data_manager.find_repeat(
-            CHECK
-        ) is None
-
-
-def test_changed_brake_history_is_not_a_repeat():
-    with temp_data_files():
-        check = {
-            **CHECK,
-            "part_name": "Brake Pads",
-            "brake_pad_history": [
-                {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
-                {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
-                {"service_date": "01-01-2026", "service_odometer": 60000, "service_action": "replace"},
-            ],
-            "history_context": {"eligible": True, "replacement_count": 3, "reason": ""},
-            "urgency_score": 6,
-        }
-        data_manager.save(check)
-        changed = dict(check)
-        changed["brake_pad_history"] = [dict(item) for item in check["brake_pad_history"]]
-        changed["brake_pad_history"][2]["service_odometer"] = 61000
-        assert data_manager.find_repeat(changed) is None
-
-
 # --- Maintenance history CRUD -----------------------------------------------
 
 SERVICE = {
@@ -817,215 +790,40 @@ def test_real_cars_json_is_valid_and_complete():
 # --- Manufacturer schedule validation ---------------------------------------
 
 
-def test_honda_city_manufacturer_schedule():
-    assert data_manager.get_service_interval(
-        "Honda City 2025",
-        "Engine Oil",
-    ) == {
-        "interval_km": 10000,
-        "interval_months": 12,
-        "action": "replace",
+def test_manufacturer_schedules_match_reference():
+    schedules = {
+        "Honda City 2025": {
+            "Engine Oil": (10000, 12, "replace"), "Brake Pads": (10000, 12, "inspect"),
+            "Spark Plugs": (100000, 0, "replace"), "Tyres": (10000, 0, "rotate"),
+            "Engine Air Filter": (30000, 0, "replace"),
+            "Coolant": (200000, 120, "replace", 100000, 60),
+        },
+        "Mazda 3 Hatchback 2020": {
+            "Engine Oil": (16000, 12, "replace"), "Brake Pads": (16000, 12, "inspect"),
+            "Spark Plugs": (120000, 0, "replace"), "Tyres": (16000, 0, "rotate"),
+            "Engine Air Filter": (48000, 36, "replace"),
+            "Coolant": (192000, 120, "replace", 96000, 60),
+        },
+        "Hyundai Elantra 2021": {
+            "Engine Oil": (15000, 12, "replace"), "Brake Pads": (15000, 12, "inspect"),
+            "Spark Plugs": (160000, 0, "replace"), "Tyres": (12000, 0, "rotate"),
+            "Engine Air Filter": (45000, 36, "replace"),
+            "Coolant": (200000, 120, "replace", 40000, 24),
+        },
+        "Kia Forte": {
+            "Engine Oil": (13000, 12, "replace"), "Brake Pads": (13000, 12, "inspect"),
+            "Spark Plugs": (156000, 0, "replace"), "Tyres": (13000, 12, "rotate"),
+            "Engine Air Filter": (39000, 36, "replace"),
+            "Coolant": (195000, 120, "replace", 39000, 24),
+        },
     }
+    for model, parts in schedules.items():
+        for part, expected in parts.items():
+            rule = data_manager.get_service_interval(model, part)
+            assert (rule["interval_km"], rule["interval_months"], rule["action"]) == expected[:3]
+            if part == "Coolant":
+                assert (rule["repeat_km"], rule["repeat_months"]) == expected[3:]
 
-    assert data_manager.get_service_interval(
-        "Honda City 2025",
-        "Brake Pads",
-    ) == {
-        "interval_km": 10000,
-        "interval_months": 12,
-        "action": "inspect",
-    }
-
-    assert data_manager.get_service_interval(
-        "Honda City 2025",
-        "Spark Plugs",
-    ) == {
-        "interval_km": 100000,
-        "interval_months": 0,
-        "action": "replace",
-    }
-
-    assert data_manager.get_service_interval(
-        "Honda City 2025",
-        "Tyres",
-    ) == {
-        "interval_km": 10000,
-        "interval_months": 0,
-        "action": "rotate",
-    }
-
-    assert data_manager.get_service_interval(
-        "Honda City 2025",
-        "Engine Air Filter",
-    ) == {
-        "interval_km": 30000,
-        "interval_months": 0,
-        "action": "replace",
-    }
-
-    assert data_manager.get_service_interval(
-        "Honda City 2025",
-        "Coolant",
-    ) == {
-        "interval_km": 200000,
-        "interval_months": 120,
-        "action": "replace",
-        "repeat_km": 100000,
-        "repeat_months": 60,
-    }
-
-
-def test_mazda3_manufacturer_schedule():
-    expected = {
-        "Engine Oil": (
-            16000,
-            12,
-            "replace",
-        ),
-        "Brake Pads": (
-            16000,
-            12,
-            "inspect",
-        ),
-        "Spark Plugs": (
-            120000,
-            0,
-            "replace",
-        ),
-        "Tyres": (
-            16000,
-            0,
-            "rotate",
-        ),
-        "Engine Air Filter": (
-            48000,
-            36,
-            "replace",
-        ),
-    }
-
-    for part, (km, months, action) in expected.items():
-        rule = data_manager.get_service_interval(
-            "Mazda 3 Hatchback 2020",
-            part,
-        )
-
-        assert rule["interval_km"] == km
-        assert rule["interval_months"] == months
-        assert rule["action"] == action
-
-    assert data_manager.get_service_interval(
-        "Mazda 3 Hatchback 2020",
-        "Coolant",
-    ) == {
-        "interval_km": 192000,
-        "interval_months": 120,
-        "action": "replace",
-        "repeat_km": 96000,
-        "repeat_months": 60,
-    }
-
-
-def test_hyundai_elantra_manufacturer_schedule():
-    expected = {
-        "Engine Oil": (
-            15000,
-            12,
-            "replace",
-        ),
-        "Brake Pads": (
-            15000,
-            12,
-            "inspect",
-        ),
-        "Spark Plugs": (
-            160000,
-            0,
-            "replace",
-        ),
-        "Tyres": (
-            12000,
-            0,
-            "rotate",
-        ),
-        "Engine Air Filter": (
-            45000,
-            36,
-            "replace",
-        ),
-    }
-
-    for part, (km, months, action) in expected.items():
-        rule = data_manager.get_service_interval(
-            "Hyundai Elantra 2021",
-            part,
-        )
-
-        assert rule["interval_km"] == km
-        assert rule["interval_months"] == months
-        assert rule["action"] == action
-
-    assert data_manager.get_service_interval(
-        "Hyundai Elantra 2021",
-        "Coolant",
-    ) == {
-        "interval_km": 200000,
-        "interval_months": 120,
-        "action": "replace",
-        "repeat_km": 40000,
-        "repeat_months": 24,
-    }
-
-
-def test_kia_forte_manufacturer_schedule():
-    expected = {
-        "Engine Oil": (
-            13000,
-            12,
-            "replace",
-        ),
-        "Brake Pads": (
-            13000,
-            12,
-            "inspect",
-        ),
-        "Spark Plugs": (
-            156000,
-            0,
-            "replace",
-        ),
-        "Tyres": (
-            13000,
-            12,
-            "rotate",
-        ),
-        "Engine Air Filter": (
-            39000,
-            36,
-            "replace",
-        ),
-    }
-
-    for part, (km, months, action) in expected.items():
-        rule = data_manager.get_service_interval(
-            "Kia Forte",
-            part,
-        )
-
-        assert rule["interval_km"] == km
-        assert rule["interval_months"] == months
-        assert rule["action"] == action
-
-    assert data_manager.get_service_interval(
-        "Kia Forte",
-        "Coolant",
-    ) == {
-        "interval_km": 195000,
-        "interval_months": 120,
-        "action": "replace",
-        "repeat_km": 39000,
-        "repeat_months": 24,
-    }
 
 def test_history_for_part_returns_only_matching_part():
     with temp_data_files():
@@ -1033,3 +831,19 @@ def test_history_for_part_returns_only_matching_part():
         data_manager.add_service({**SERVICE, "part_name": "Engine Oil"})
         result = data_manager.history_for_part("SBA1234A", "Brake Pads")
         assert len(result) == 1 and result[0]["part_name"] == "Brake Pads"
+
+
+def test_brake_history_change_prevents_repeat_reuse():
+    history = [
+        {"service_date": "01-01-2022", "service_odometer": 20000, "service_action": "replace"},
+        {"service_date": "01-01-2024", "service_odometer": 40000, "service_action": "replace"},
+        {"service_date": "01-01-2026", "service_odometer": 60000, "service_action": "replace"},
+    ]
+    first = {**CHECK, "part_name": "Brake Pads", "brake_pad_history": history,
+             "history_context": {"eligible": True, "replacement_count": 3, "reason": ""}}
+    changed = {**first, "brake_pad_history": [dict(item) for item in history]}
+    changed["brake_pad_history"][2]["service_odometer"] = 61000
+    with temp_data_files():
+        data_manager.save({**first, "urgency_score": 6})
+        assert data_manager.find_repeat(first) is not None
+        assert data_manager.find_repeat(changed) is None
