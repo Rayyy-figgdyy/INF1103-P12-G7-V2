@@ -412,11 +412,12 @@ def test_manual_path_only_when_file_exists():
 
 
 def test_real_catalogue_file_is_valid():
+    # Verify that the actual car catalogue contains all four supported models.
     assert data_manager.list_car_models() == [
         "Honda City 2025",
         "Mazda 3 Hatchback 2020",
         "Hyundai Elantra 2021",
-        "Kia Forte",
+        "Kia Forte 2024",
     ]
 
     for model in data_manager.list_car_models():
@@ -811,7 +812,7 @@ def test_manufacturer_schedules_match_reference():
             "Engine Air Filter": (45000, 36, "replace"),
             "Coolant": (200000, 120, "replace", 40000, 24),
         },
-        "Kia Forte": {
+        "Kia Forte 2024": {
             "Engine Oil": (13000, 12, "replace"), "Brake Pads": (13000, 12, "inspect"),
             "Spark Plugs": (156000, 0, "replace"), "Tyres": (13000, 12, "rotate"),
             "Engine Air Filter": (39000, 36, "replace"),
