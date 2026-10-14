@@ -16,13 +16,17 @@ import logic_manager
 # ======================================================================
 
 # Run one maintenance check through AI, then apply deterministic business rules.
+# raw_record has car, part, odometer and manufacturer interval details.
 def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
     # AI combines the manual and any eligible Brake Pad history into one urgency score.
     ai_result = ai_manager.process(raw_record, manual_path=manual_path)
-    final_record = dict(ai_result)
+    final_record = dict(ai_result)  # Copy so the AI result is not edited in place.
 
+    # Apply the official schedule after receiving the AI response.
     final_record.update(logic_manager.evaluate(final_record))
+    # Risk score orders the urgent list; it is not the final decision.
     final_record["risk_score"] = logic_manager.score(final_record)
+    # Routing combines AI results with mandatory safety and overdue rules.
     final_record["outcome"] = logic_manager.route(final_record)
     return final_record
 
@@ -30,6 +34,7 @@ def build_record(raw_record: dict, manual_path: str | None = None) -> dict:
 # Return the earliest service date, or None when the model year is unknown.
 def earliest_service_date(user: dict) -> datetime.date | None:
     model_year = data_manager.get_model_year(user["car_model"])
+    # If the car year is unavailable, the caller handles this missing limit.
     if model_year is None:
         return None
     return datetime.date(model_year, 1, 1)  # The exact build date is unknown.
@@ -38,12 +43,14 @@ def earliest_service_date(user: dict) -> datetime.date | None:
 # Return the first mileage problem, or None when the service fits the history.
 def service_problem(user: dict, entries: list[dict], service_date: str, odometer: int,
                     ignore_id: int | None = None) -> str | None:
+    # First reject a reading that goes backwards compared with earlier entries.
     problem = logic_manager.check_service_odometer(
         entries, service_date, odometer, ignore_id
     )
     if problem is not None:
         return problem
 
+    # Then reject a distance that is implausible for the elapsed time.
     model_year = data_manager.get_model_year(user["car_model"])
     return logic_manager.check_service_pace(
         entries, service_date, odometer, model_year, ignore_id
@@ -53,11 +60,13 @@ def service_problem(user: dict, entries: list[dict], service_date: str, odometer
 # Return the allowed COE expiry date range for the car.
 def coe_limits(car_model: str) -> tuple:
     model_year = data_manager.get_model_year(car_model)
+    # Use today when checking COE validity.
     return logic_manager.coe_date_range(model_year, datetime.date.today())
 
 
 # Return the highest odometer reading already saved for the car.
 def last_odometer_on_file(license_plate: str) -> int | None:
+    # Both past AI checks and workshop services contain odometer readings.
     saved_records = data_manager.load() + data_manager.load_history()
     return data_manager.get_last_odometer(saved_records, license_plate)
 
@@ -69,6 +78,7 @@ def last_odometer_on_file(license_plate: str) -> int | None:
 # Ask for an invoice until its date and mileage fit the saved history.
 def prompt_valid_invoice(user: dict, history: list[dict], parts: list[str],
                          part_name: str | None = None) -> dict | None:
+    # Repeat the question when an invoice fails validation.
     while True:
         invoice = io_manager.prompt_service_entry(
             parts, part_name, earliest_service_date(user)
@@ -77,10 +87,12 @@ def prompt_valid_invoice(user: dict, history: list[dict], parts: list[str],
             user, history, invoice["service_date"], invoice["service_odometer"]
         )
 
+        # None means no validation error; the invoice is safe to use.
         if problem is None:
             return invoice
 
         io_manager.display_message(f"  -> {problem}")
+        # Allow the owner to cancel rather than forcing another attempt.
         if not io_manager.confirm_action("Enter this invoice again?"):
             return None
 
@@ -88,8 +100,10 @@ def prompt_valid_invoice(user: dict, history: list[dict], parts: list[str],
 # Save one part from an invoice and return the saved entry.
 def save_invoice_part(user: dict, history: list[dict], invoice: dict,
                       part_name: str) -> dict | None:
+    # One invoice can cover several parts with different service actions.
     service_action = invoice["service_actions"][part_name]
 
+    # Date, odometer, part and performed action identify an exact duplicate.
     duplicate = logic_manager.find_duplicate_service(
         history,
         part_name,
@@ -105,15 +119,17 @@ def save_invoice_part(user: dict, history: list[dict], invoice: dict,
         )
         return None
 
+    # Store a separate JSON history entry for this part.
     entry = {
-        "license_plate": user["license_plate"],
+        "license_plate": user["license_plate"],  # Car that owns this record.
         "part_name": part_name,
-        "service_action": service_action,
+        "service_action": service_action,  # Actual action, such as inspect or replace.
         "service_date": invoice["service_date"],
         "service_odometer": invoice["service_odometer"],
         "notes": invoice["notes"],
     }
 
+    # data_manager assigns the service ID and writes the JSON record.
     saved = data_manager.add_service(entry)
     if saved is None:
         io_manager.display_message(
@@ -124,22 +140,26 @@ def save_invoice_part(user: dict, history: list[dict], invoice: dict,
 
 # Ask for one invoice and save one history entry for each serviced part.
 def save_new_services(user: dict, part_name: str | None = None) -> list[dict]:
+    # Only parts defined in the selected car's schedule can be logged.
     parts = data_manager.list_parts(user["car_model"])
     if not parts:
         io_manager.display_message("No service schedule is available for your car.")
         return []
 
+    # The current car's history is used to validate the new invoice.
     history = data_manager.history_for_plate(user["license_plate"])
     invoice = prompt_valid_invoice(user, history, parts, part_name)
     if invoice is None:
         return []
 
     saved_entries = []
+    # Save each selected part individually, retaining one shared invoice.
     for name in invoice["part_names"]:
         saved = save_invoice_part(user, history, invoice, name)
-        if saved is not None:
+        if saved is not None:  # Ignore duplicates or failed saves.
             saved_entries.append(saved)
 
+    # Display only entries that were actually saved.
     if saved_entries:
         io_manager.display_message(
             f"\n{len(saved_entries)} service(s) added to your history:"
@@ -158,6 +178,7 @@ def add_service_flow(user: dict) -> None:
 # Menu option 2: show services newest first with their latest assessments.
 def history_flow(user: dict) -> None:
     plate = user["license_plate"]
+    # Sort entries newest first so the latest servicing is easy to find.
     entries = logic_manager.sort_history(data_manager.history_for_plate(plate))
 
     if not entries:
@@ -167,10 +188,12 @@ def history_flow(user: dict) -> None:
         )
         return
 
+    # Limit previous AI assessments to this licence plate.
     saved_checks = data_manager.query(
         lambda record: record.get("license_plate") == plate
     )
 
+    # Build display-only rows with any assessment tied to each service.
     rows = []
     for entry in entries:
         row = dict(entry)  # Copy it so the saved entry is not changed.
@@ -185,6 +208,7 @@ def history_flow(user: dict) -> None:
 # Check whether an edited service conflicts with saved history.
 def edited_service_problem(user: dict, entries: list[dict], chosen: dict,
                            updated: dict) -> str | None:
+    # Ignore the entry being edited when comparing it with existing data.
     problem = service_problem(
         user,
         entries,
@@ -195,6 +219,7 @@ def edited_service_problem(user: dict, entries: list[dict], chosen: dict,
     if problem is not None:
         return problem
 
+    # Also prevent an edit from becoming a duplicate of another service.
     duplicate = logic_manager.find_duplicate_service(
         entries,
         updated["part_name"],
@@ -220,6 +245,7 @@ def edit_service_flow(user: dict) -> None:
         )
         return
 
+    # A cancelled selection returns None and leaves history unchanged.
     chosen = io_manager.prompt_service_choice(entries, "edit")
     if chosen is None:
         io_manager.display_message("Edit cancelled.")
@@ -230,11 +256,13 @@ def edit_service_flow(user: dict) -> None:
         chosen, parts, earliest_service_date(user)
     )
 
+    # Validate before saving, otherwise the old entry remains untouched.
     problem = edited_service_problem(user, entries, chosen, updated)
     if problem is not None:
         io_manager.display_message(f"  -> {problem}\nNothing was changed.")
         return
 
+    # Failed JSON saving must not be presented as a successful edit.
     if not data_manager.update_service(updated):
         io_manager.display_message("Could not save your changes. Please try again.")
         return
@@ -259,11 +287,13 @@ def delete_service_flow(user: dict) -> None:
         io_manager.display_message("Delete cancelled.")
         return
 
+    # Show the selected record before asking for permanent deletion.
     io_manager.display_service(chosen)
     if not io_manager.confirm_action("Delete this service from your history?"):
         io_manager.display_message("Delete cancelled.")
         return
 
+    # Delete by the unique service ID, not by the visible row number.
     if data_manager.delete_service(chosen.get("service_id")):
         io_manager.display_message("Service deleted.")
     else:
@@ -277,6 +307,7 @@ def delete_service_flow(user: dict) -> None:
 # Ask which supported part to check and return its manual and schedule details.
 def check_setup(user: dict) -> tuple | None:
     car_model = user["car_model"]
+    # The manual is required because AI checks use the manufacturer PDF.
     manual_path = data_manager.get_manual_path(car_model)
 
     if manual_path is None:
@@ -285,6 +316,7 @@ def check_setup(user: dict) -> tuple | None:
         )
         return None
 
+    # Supported parts and intervals come from cars.json, not AI guesses.
     parts = data_manager.list_parts(car_model)
     if not parts:
         io_manager.display_message(
@@ -292,6 +324,7 @@ def check_setup(user: dict) -> tuple | None:
         )
         return None
 
+    # The chosen part determines the applicable official schedule.
     part_name = io_manager.prompt_part_choice(parts)
     interval = data_manager.get_service_interval(car_model, part_name)
     if interval is None:
@@ -305,8 +338,10 @@ def check_setup(user: dict) -> tuple | None:
 def latest_service_for_check(user: dict, part_name: str, interval: dict) -> tuple:
     history = data_manager.history_for_plate(user["license_plate"])
     model_year = data_manager.get_model_year(user["car_model"])
+    # "inspect" and "replace" must not be treated as the same action.
     required_action = interval.get("action", "replace")
 
+    # Match the latest relevant service using the scheduled action.
     last_service = logic_manager.latest_service(
         history, part_name, required_action, model_year
     )
@@ -318,8 +353,9 @@ def resolve_last_service(user: dict, part_name: str, interval: dict) -> tuple | 
     history, model_year, last_service = latest_service_for_check(
         user, part_name, interval
     )
-    from_new = False
+    from_new = False  # Start by assuming a recorded service is required.
 
+    # Reuse saved information instead of asking the user to type it again.
     if last_service is not None:
         return last_service, history, model_year, from_new
 
@@ -337,15 +373,18 @@ def resolve_last_service(user: dict, part_name: str, interval: dict) -> tuple | 
         last_service = logic_manager.from_new_service(part_name, model_year)
         return last_service, history, model_year, from_new
 
+    # No matching history: ask whether the owner wants to add a record.
     if not io_manager.confirm_action(f"Add your last {part_name} service now?"):
         return None
 
     if not save_new_services(user, part_name):
         return None
 
+    # Re-read saved history after the owner enters a new service.
     history, model_year, last_service = latest_service_for_check(
         user, part_name, interval
     )
+    # An inspection alone may not reset a replacement/rotation interval.
     if last_service is None:
         io_manager.display_message(
             "The entry was saved, but an inspection does not reset this service interval. "
@@ -359,6 +398,7 @@ def resolve_last_service(user: dict, part_name: str, interval: dict) -> tuple | 
 # Show which service the maintenance check is using.
 def display_check_service(part_name: str, last_service: dict,
                           from_new: bool) -> None:
+    # Make the chosen servicing baseline visible to the user.
     if from_new:
         io_manager.display_message(
             f"\nChecking your {part_name} from new "
@@ -375,12 +415,14 @@ def display_check_service(part_name: str, last_service: dict,
 # Ask for today's odometer after checking it against saved readings.
 def prompt_check_odometer(user: dict, last_service: dict,
                           history: list[dict]) -> int:
+    # Saved checks can contain newer mileage than the service log.
     plate = user["license_plate"]
     saved_checks = data_manager.query(
         lambda record: record.get("license_plate") == plate
     )
     latest_reading = logic_manager.latest_reading(history, saved_checks)
 
+    # Use the latest recorded reading to limit implausible new mileage.
     max_plausible = None
     if latest_reading is not None:
         reading_date, reading_odometer = latest_reading
@@ -388,6 +430,7 @@ def prompt_check_odometer(user: dict, last_service: dict,
             reading_date, reading_odometer, datetime.date.today()
         )
 
+    # The prompt applies the stored mileage limits before accepting input.
     last_odometer = last_odometer_on_file(plate)
     return io_manager.prompt_current_odometer(
         last_service["service_odometer"], last_odometer, max_plausible
@@ -398,7 +441,9 @@ def prompt_check_odometer(user: dict, last_service: dict,
 def build_check_record(user: dict, part_name: str, last_service: dict,
                        current_odometer: int, chosen_interval: dict,
                        model_year: int | None) -> dict:
+    # Keep a consistent check date across the entire assessment record.
     today = datetime.date.today()
+    # Combine profile details with the service selected for this check.
     raw_record = {
         "license_plate": user["license_plate"],
         "car_model": user["car_model"],
@@ -406,26 +451,32 @@ def build_check_record(user: dict, part_name: str, last_service: dict,
         "coe_expiry_date": user["coe_expiry_date"],
         "part_name": part_name,
         "check_date": today.strftime("%d-%m-%Y"),
-        "service_id": last_service.get("service_id"),
+        "service_id": last_service.get("service_id"),  # None for a synthetic "from new" entry.
         "last_service_date": last_service["service_date"],
         "last_service_mileage": last_service["service_odometer"],
+        # Old records may lack an action.
         "last_service_action": last_service.get("service_action") or "unknown",
         "current_odometer": current_odometer,
     }
+    # Add the official first/repeat servicing interval to the record.
     raw_record.update(chosen_interval)
 
+    # Only Brake Pads have the extra personalised history feature.
     if part_name == "Brake Pads":
         brake_history = data_manager.history_for_part(
             user["license_plate"], part_name
         )
+        # Logic checks if at least three valid replacements are available.
         context = logic_manager.brake_history_context(
             brake_history, model_year, today, current_odometer
         )
+        # Keep the eligibility result and reason, even when not eligible.
         raw_record["history_context"] = {
             "eligible": context["eligible"],
-            "replacement_count": context["replacement_count"],
+            "replacement_count": context["replacement_count"],  # Count of confirmed replacements.
             "reason": context["reason"],
         }
+        # Only eligible replacement records are attached to the AI input.
         if context["eligible"]:
             raw_record["brake_pad_history"] = context["replacement_records"]
 
@@ -434,11 +485,13 @@ def build_check_record(user: dict, part_name: str, last_service: dict,
 
 # Menu option 5: assess one part using the manual, history and current mileage.
 def check_part_flow(user: dict) -> None:
+    # Stop safely if the manual, part or manufacturer rule is unavailable.
     setup = check_setup(user)
     if setup is None:
         return
 
     manual_path, part_name, interval = setup
+    # Identify a relevant latest service, or request a new one.
     service_details = resolve_last_service(user, part_name, interval)
     if service_details is None:
         return
@@ -446,13 +499,17 @@ def check_part_flow(user: dict) -> None:
     last_service, history, model_year, from_new = service_details
     display_check_service(part_name, last_service, from_new)
 
+    # The official interval may change after a part's first replacement.
     part_services = [
         service for service in history
         if service.get("part_name") == part_name
     ]
+    # Select the first or repeat rule.
     chosen_interval = logic_manager.choose_interval(interval, part_services)
+    # Ask for present mileage only after the servicing baseline is known.
     current_odometer = prompt_check_odometer(user, last_service, history)
 
+    # Collect everything the AI and the rule engine need in one dict.
     raw_record = build_check_record(
         user,
         part_name,
@@ -471,8 +528,10 @@ def check_part_flow(user: dict) -> None:
     io_manager.display_message(
         "\nAsking the AI to check this part against your manual..."
     )
+    # A fresh check passes through AI before deterministic evaluation.
     final_record = build_record(raw_record, manual_path)
 
+    # Show the result even if saving the assessment fails.
     if not data_manager.save(final_record):
         io_manager.display_message(
             "Warning: the assessment could not be saved to disk."
@@ -482,16 +541,19 @@ def check_part_flow(user: dict) -> None:
 
 # Menu option 6: show each part's latest assessment needing attention.
 def urgent_flow(user: dict) -> None:
+    # Show only results saved for the currently logged-in vehicle.
     plate = user["license_plate"]
     saved_checks = data_manager.query(
         lambda record: record.get("license_plate") == plate
     )
 
+    # Older outcomes for the same part should not stay in the urgent list.
     urgent_records = []
     for record in logic_manager.latest_check_per_part(saved_checks):
-        if logic_manager.is_urgent(record):
+        if logic_manager.is_urgent(record):  # Keep only outcomes requiring attention.
             urgent_records.append(record)
 
+    # Highest-risk items appear first for quicker attention.
     urgent_records.sort(
         key=lambda record: record.get("risk_score", 0),
         reverse=True,
@@ -514,6 +576,7 @@ def urgent_flow(user: dict) -> None:
 
 # Find the profile for a licence plate, or return None if it is not registered.
 def login_flow() -> dict | None:
+    # The licence plate is the lookup key for a saved user profile.
     plate = io_manager.prompt_login()
     user = data_manager.find_user_by_plate(plate)
 
@@ -529,6 +592,7 @@ def login_flow() -> dict | None:
 
 # Create and return a new profile, or None if registration cannot be completed.
 def register_flow() -> dict | None:
+    # Registration needs a populated car catalogue.
     car_models = data_manager.list_car_models()
     if not car_models:
         io_manager.display_message(
@@ -536,6 +600,7 @@ def register_flow() -> dict | None:
         )
         return None
 
+    # This set prevents registering two profiles with the same plate.
     taken_plates = {
         user.get("license_plate")
         for user in data_manager.load_users()
@@ -544,8 +609,10 @@ def register_flow() -> dict | None:
     identity = io_manager.prompt_identity(taken_plates)
     car_model = io_manager.prompt_car_choice(car_models)
     car = data_manager.find_car(car_model)
+    # The selected car year determines the permitted COE date range.
     earliest_coe, latest_coe = coe_limits(car_model)
 
+    # Save one JSON profile using validated answers from io_manager.
     profile = {
         "name": identity["name"],
         "license_plate": identity["license_plate"],
@@ -572,6 +639,7 @@ def update_profile_flow(user: dict) -> dict:
         user, earliest_coe, latest_coe
     )
 
+    # Return the original profile if the updated one cannot be saved.
     if not data_manager.save_user(updated_profile):
         io_manager.display_message("Could not save your changes. Please try again.")
         return user
@@ -584,6 +652,7 @@ def update_profile_flow(user: dict) -> dict:
 # Delete a confirmed profile and all records linked to its licence plate.
 def delete_profile_flow(user: dict) -> dict | None:
     plate = user["license_plate"]
+    # Count linked records so the confirmation explains what will be lost.
     service_count = len(data_manager.history_for_plate(plate))
     check_count = len(
         data_manager.query(lambda record: record.get("license_plate") == plate)
@@ -593,6 +662,7 @@ def delete_profile_flow(user: dict) -> dict | None:
         f"Permanently delete {plate}, its {service_count} service(s) and "
         f"{check_count} urgency check(s)?"
     )
+    # A declined confirmation leaves the profile and records intact.
     if not io_manager.confirm_action(question):
         io_manager.display_message("Delete cancelled.")
         return user
@@ -601,6 +671,7 @@ def delete_profile_flow(user: dict) -> dict | None:
         io_manager.display_message("Could not delete the profile. Please try again.")
         return user
 
+    # Remove history and assessments associated with the deleted plate.
     data_manager.delete_history_for_plate(plate)
     data_manager.delete_records_for_plate(plate)
     io_manager.display_message(
@@ -615,6 +686,7 @@ def delete_profile_flow(user: dict) -> dict | None:
 
 # Hide minor Google library notices while keeping errors visible.
 def hide_google_notices(record: logging.LogRecord) -> bool:
+    # Avoid cluttering the terminal with non-error SDK messages.
     from_google = record.name.startswith("google_genai")
     is_minor = record.levelno < logging.ERROR
     return not (from_google and is_minor)
@@ -622,6 +694,7 @@ def hide_google_notices(record: logging.LogRecord) -> bool:
 
 # Handle one logged-out menu choice and return the user plus exit request.
 def handle_logged_out_choice(choice: str) -> tuple:
+    # None means no one has logged in yet.
     current_user = None
     should_exit = False
 
@@ -637,10 +710,11 @@ def handle_logged_out_choice(choice: str) -> tuple:
             "Invalid choice. Please enter a number from the menu."
         )
 
-    return current_user, should_exit
+    return current_user, should_exit  # Tell the loop if the app should close.
 
 
 # Handle one logged-in menu choice and return the user plus exit request.
+# Only menu choices changing the profile need a new current_user value.
 def handle_logged_in_choice(choice: str, current_user: dict) -> tuple:
     should_exit = False
 
@@ -673,14 +747,16 @@ def handle_logged_in_choice(choice: str, current_user: dict) -> tuple:
             "Invalid choice. Please enter a number from the menu."
         )
 
+    # Pause after display-heavy options so the user can read results.
     if choice in ("1", "2", "3", "4", "5", "6", "7"):
         io_manager.wait_for_enter()
 
-    return current_user, should_exit
+    return current_user, should_exit  # Return updated login and exit state.
 
 
 # Run the menus until the user exits.
 def main() -> None:
+    # Keep warnings and errors visible while filtering minor SDK notices.
     logging.basicConfig(
         level=logging.WARNING,
         format="[%(levelname)s] %(name)s: %(message)s",
@@ -688,12 +764,15 @@ def main() -> None:
     for handler in logging.getLogger().handlers:
         handler.addFilter(hide_google_notices)
 
+    # Current login is held in memory until logout or exit.
     current_user = None
 
     try:
+        # Refresh the menu after every action until the user exits.
         while True:
             choice = io_manager.prompt_main_menu(current_user)
 
+            # Different choices are available before and after login.
             if current_user is None:
                 current_user, should_exit = handle_logged_out_choice(choice)
             else:
@@ -701,9 +780,10 @@ def main() -> None:
                     choice, current_user
                 )
 
-            if should_exit:
+            if should_exit:  # Stop the main loop after an Exit choice.
                 break
 
+    # Ctrl+C and non-interactive Docker exits should end cleanly.
     except (KeyboardInterrupt, EOFError):
         io_manager.display_message(
             "\nExiting. (If you're using Docker, run with: docker run -it ...)"
