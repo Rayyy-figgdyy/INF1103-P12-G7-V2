@@ -26,5 +26,12 @@
     "car_model": "Honda City 2025",
     "car_condition": "Brand New",
     "coe_expiry_date": "20-11-2026"
+  },
+  {
+    "name": "j",
+    "license_plate": "SSS3333S",
+    "car_model": "Honda City 2025",
+    "car_condition": "Brand New",
+    "coe_expiry_date": "01-01-2029"
   }
 ]
