@@ -4,8 +4,12 @@ google-genai>=1.0.0
 # Groq API for fast AI model responses.
 groq>=0.9.0
 
+# Network errors from the AI services (GeminiProvider names httpx.HTTPError).
+httpx>=0.27
+
 # Read and extract information from car maintenance PDF manuals.
-pdfplumber>=0.10.0
+# 0.11 or newer: ManualReader catches its PdfminerException.
+pdfplumber>=0.11.0
 
 # Load API keys and environment settings from the .env file.
 python-dotenv>=1.0.0
