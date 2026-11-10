@@ -53,13 +53,31 @@ class JsonStore:
         return []
 
     def write_list(self, items: list[dict]) -> bool:
-        """Overwrite the file with the whole list, creating its folder if needed.
-        Returns True on success, False if writing failed (the error is logged)."""
+        """Safely replace a JSON list, refusing to overwrite corrupt existing data.
+        The temporary file keeps the original intact if a write fails halfway."""
+        temporary_path = self.__path + ".tmp"
         try:
+            # Missing files are normal, but a damaged EXISTING file must be protected not overwritten.
+            if os.path.exists(self.__path):
+                with open(self.__path, "r", encoding="utf-8") as existing_file:
+                    existing_data = json.load(existing_file)
+                if not isinstance(existing_data, list):
+                    logger.error("Refusing to overwrite %s: expected a JSON list.", self.__path)
+                    return False
+
             os.makedirs(os.path.dirname(self.__path), exist_ok=True)
-            with open(self.__path, "w", encoding="utf-8") as file:
+            with open(temporary_path, "w", encoding="utf-8") as file:
                 json.dump(items, file, indent=2)
+            os.replace(temporary_path, self.__path)  # Replace only after a complete write.
             return True
-        except OSError as error:
-            logger.error("Could not write %s: %s", self.__path, error)
+        except (OSError, json.JSONDecodeError, UnicodeError) as error:
+            logger.error("Refusing to overwrite %s because it is unreadable or corrupt: %s",
+                         self.__path, error)
             return False
+        finally:
+            # Remove a partial temporary file, never the original data file.
+            if os.path.exists(temporary_path):
+                try:
+                    os.remove(temporary_path)
+                except OSError:
+                    pass

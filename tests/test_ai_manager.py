@@ -465,7 +465,9 @@ def test_gemini_api_error_is_caught_and_backup_answers():
     from google.genai import errors as genai_errors
 
     calls_g, calls_q = [], []
-    ai = manager(fake_client([genai_errors.APIError("503 busy")], calls_g),
+    ai = manager(fake_client([genai_errors.APIError(
+        503, {"error": {"code": 503, "message": "The model is overloaded.",
+                        "status": "UNAVAILABLE"}})], calls_g),
                  fake_groq([json.dumps(GOOD)], calls_q))
     result = ai.process(RECORD)
     assert result["ai_status"] == "ok" and result["ai_provider"] == "Groq (backup)"

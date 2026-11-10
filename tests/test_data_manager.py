@@ -271,7 +271,7 @@ def test_real_catalogue_file_is_valid():
         "Honda City 2025",
         "Mazda 3 Hatchback 2020",
         "Hyundai Elantra 2021",
-        "Kia Forte",
+        "Kia Forte 2024",
     ]
     for model in cars.list_models():
         assert len(cars.list_parts(model)) >= 1, model
@@ -493,7 +493,7 @@ def test_manufacturer_schedules_match_reference():
             "Engine Air Filter": (45000, 36, "replace"),
             "Coolant": (200000, 120, "replace", 40000, 24),
         },
-        "Kia Forte": {
+        "Kia Forte 2024": {
             "Engine Oil": (13000, 12, "replace"), "Brake Pads": (13000, 12, "inspect"),
             "Spark Plugs": (156000, 0, "replace"), "Tyres": (13000, 12, "rotate"),
             "Engine Air Filter": (39000, 36, "replace"),
