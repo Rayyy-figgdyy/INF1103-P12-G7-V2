@@ -424,6 +424,42 @@ def test_corrupt_measurement_file_is_not_overwritten(tmp_path):
         service(tmp_path).add_refuel(PLATE, "01-01-2025", 10000, 20)
     assert path.read_text(encoding="utf-8") == "{broken"
 
+# A saved report should survive a restart. A new fill makes it outdated, but only Analyse requests AI again.
+def test_saved_report_is_reused_until_a_new_refuel_changes_the_data(tmp_path):
+    fuel = service(tmp_path, [15] * 8)
+    ai = RecordingAI()
+    notices = []
+    options = {"before_request": lambda: notices.append("new request")}
+    first = request_report(fuel, ai, **options)
+    again = request_report(service(tmp_path), ForbiddenAI(), **options)
+    assert first["ai_status"] == "ok" and first["saved"]
+    assert again["saved"] and again["reused"] and ai.calls == 1
+    assert notices == ["new request"]
+    append(fuel, 10)
+    assert fuel.get_dashboard(PLATE)["assessment_pending"] and ai.calls == 1
+    assert not fuel.get_dashboard(PLATE)["alert_active"]
+    changed = request_report(fuel, ai, **options)
+    assert changed["saved"] and not changed["reused"] and ai.calls == 2
+    assert notices == ["new request", "new request"]
+
+# AI needs a fresh assessment when maintenance or a review changes. Private notes should stay out of its input.
+def test_maintenance_and_reviews_invalidate_cached_ai_reports(tmp_path):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    history = History([])
+    fuel = FuelService(data.fuel, data.fuel_assessments, maintenance_history=history,
+                       maintenance_rules=HistoryRules(), reviews=data.fuel_reviews)
+    seed(fuel, [15] * 5 + [10] * 3)
+    ai = RecordingAI(anomaly_status="Unusual drop", pattern="Repeated")
+    request_report(fuel, ai)
+    history.records.append(maintenance("01-01-2024", 5000))
+    request_report(fuel, ai)
+    assert ai.calls == 2
+    assert "license_plate" not in ai.last_dashboard["maintenance_history"][0]
+    assert "notes" not in ai.last_dashboard["maintenance_history"][0]
+    fuel.review_alert(PLATE, "ordinary_variation")
+    ai.answer = ai_answer()
+    request_report(fuel, ai)
+    assert ai.calls == 3
 
 # Reject unusable replies, including made-up record IDs, duplicate IDs and invalid confidence values.
 @pytest.mark.parametrize("change", [
@@ -502,6 +538,40 @@ def test_a_single_outlier_is_not_routed_as_persistent_deterioration():
     result = FuelLogicManager().evaluate_fuel(analyse([15] * 7 + [10]), reply)
     assert result["fuel_outcome"].startswith("VERIFY")
 
+
+# A matching saved report cannot bypass the minimum-history check.
+def test_validation_also_blocks_an_old_learning_period_report(tmp_path):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    fuel = service(tmp_path)
+    key = fuel.data_key(fuel.get_dashboard(PLATE), CAR_MODEL)
+    assert data.fuel_assessments.save(PLATE, key, ai_answer())
+    result = request_report(fuel, ForbiddenAI())
+    assert result["ai_status"] == "insufficient_history"
+    assert result["reused"] is False
+
+# Reports from the older numerical-warning format need reassessment, even when their data key matches.
+@pytest.mark.parametrize("old_format", ["missing_decision", "numerical_warning"])
+def test_old_report_formats_are_not_reused_as_ai_decisions(tmp_path, old_format):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    fuel = service(tmp_path, [15] * 8)
+    if old_format == "missing_decision":
+        old = ai_answer()
+        old.pop("anomaly_status")
+        old.pop("flagged_entry_ids")
+    else:
+        old = {"ai_status": "ok", "numeric_status": "Potential abnormal consumption",
+               "baseline_frozen": True, "summary": "An older report without an AI anomaly decision"}
+    key = fuel.data_key(fuel.get_dashboard(PLATE), CAR_MODEL)
+    assert data.fuel_assessments.save(PLATE, key, old)
+    dashboard = fuel.get_dashboard(PLATE)
+    assert dashboard["assessment_pending"] and not dashboard["alert_active"]
+    assert dashboard["latest_status"] == "Not assessed"
+    ai = RecordingAI()
+    result = request_report(fuel, ai)
+    assert ai.calls == 1 and result["saved"] and not result["reused"]
+    assert request_report(service(tmp_path), ForbiddenAI())["reused"]
+    assert len(data.fuel_assessments.for_plate(PLATE)) == 2
+
 # Nine records are not always eight usable intervals: a deleted middle fill leaves a measurement gap.
 def test_deletion_can_make_nine_remaining_records_insufficient(tmp_path):
     fuel = service(tmp_path, [15] * 9)
@@ -553,6 +623,16 @@ def test_an_ordinary_review_prevents_ai_from_reopening_the_same_interval_ids(tmp
     provider = Provider(json.dumps(ai_answer(anomaly_status="Unusual drop", flagged_entry_ids=[9])))
     result = request_report(fuel, FuelAIManager([provider], retry_delay=0))
     assert result["ai_status"] == "unavailable" and not fuel.get_dashboard(PLATE)["alert_active"]
+
+# A different vehicle model changes the assessment context, so the old report must be reassessed.
+def test_changing_the_car_model_invalidates_the_saved_report(tmp_path):
+    fuel = service(tmp_path, [15] * 8)
+    ai = RecordingAI()
+    request_report(fuel, ai)
+    assert not fuel.get_dashboard(PLATE, CAR_MODEL)["assessment_pending"]
+    assert fuel.get_dashboard(PLATE, "Mazda 3 Hatchback 2020")["assessment_pending"]
+    result = request_report(fuel, ai, model='Mazda 3 Hatchback 2020')
+    assert ai.calls == 2 and not result["reused"]
 def test_damaged_saved_comparison_is_not_used_or_reused(tmp_path, damage):
     fuel = service(tmp_path, [15] * 5 + [10] * 3)
     open_alert(fuel)
