@@ -81,6 +81,75 @@ class History:
 def maintenance(day, km, plate=PLATE):
     return {"license_plate": plate, "part_name": "Engine Oil", "service_date": day,
             "service_odometer": km, "service_action": "replace", "notes": "private note"}
+
+# Start with one complete, valid AI reply, then change only the fields a test is interested in.
+def ai_answer(**changes):
+    result = {"ai_status": "ok", "ai_provider": "Fake", "anomaly_status": "Normal",
+              "trend": "Stable", "confidence": "Medium", "baseline_assessment": "Suitable",
+              "pattern": "No clear drop", "flagged_entry_ids": [],
+              "summary": "The saved fuel pattern has been assessed; driving context is unknown.",
+              "possible_factors": [], "suggested_checks": ["Continue recording full-tank refuels"]}
+    result.update(changes)
+    return result
+
+# Count requests and remember the evidence sent to AI. This makes unwanted repeat requests visible.
+class RecordingAI:
+    def __init__(self, **changes):
+        self.calls = 0
+        self.last_dashboard = None
+        self.answer = ai_answer(**changes)
+
+    def analyse_fuel(self, dashboard, car_model):
+        self.calls += 1
+        self.last_dashboard = dashboard
+        result = dict(self.answer)
+        if result["anomaly_status"] in ("Monitor", "Unusual drop"):
+            ids = dashboard["eligible_alert_entry_ids"]
+            result["flagged_entry_ids"] = list(ids if result["pattern"] in ("Repeated", "Gradual") else ids[-1:])
+        return result
+
+# Return the text we supply, or raise a test error. No network connection is involved.
+class Provider:
+    is_available = True
+
+    def __init__(self, reply, name="Fake provider"):
+        self.reply = reply
+        self.name = name
+        self.calls = 0
+        self.prompt = None
+
+    def ask(self, prompt, manual_path, part_name):
+        self.calls += 1
+        self.prompt = prompt
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+# Act like an unavailable AI service while recording how many requests were attempted.
+class UnavailableAI:
+    def __init__(self):
+        self.calls = 0
+
+    def analyse_fuel(self, dashboard, car_model):
+        self.calls += 1
+        return {"ai_status": "unavailable", "message": "Test provider is unavailable"}
+
+# Fail immediately if a path that should skip AI accidentally asks for a report.
+class ForbiddenAI:
+    def analyse_fuel(self, dashboard, car_model):
+        raise AssertionError("AI must not be called for this request")
+
+# Keep the usual vehicle and rule settings in one place; every caller still supplies its own fake AI.
+def request_report(fuel, ai, model=CAR_MODEL, **options):
+    return fuel.analyse_with_ai(PLATE, ai, model, FuelLogicManager(), **options)
+
+# Open a real saved alert using a fake AI decision, ready for the review and recovery tests.
+def open_alert(fuel):
+    ai = RecordingAI(anomaly_status="Unusual drop", pattern="Repeated",
+                     trend="Worsening", confidence="High")
+    result = request_report(fuel, ai)
+    assert result["ai_status"] == "ok" and result["saved"] and result["alert_active"]
+    return result
 # One starting fill does not create an interval. We need eight usable intervals before assessment.
 @pytest.mark.parametrize("count", range(8))
 def test_incomplete_history_cannot_be_assessed(count):
@@ -210,3 +279,36 @@ def test_corrupt_measurement_file_is_not_overwritten(tmp_path):
     with pytest.raises(OSError):
         service(tmp_path).add_refuel(PLATE, "01-01-2025", 10000, 20)
     assert path.read_text(encoding="utf-8") == "{broken"
+
+# Hold the measurements constant and change the AI reply. The anomaly category must follow the AI decision.
+@pytest.mark.parametrize("status", ["Normal", "Monitor", "Unusual drop", "Unclear"])
+def test_ai_owns_the_anomaly_category_for_the_same_evidence(tmp_path, status):
+    fuel = service(tmp_path, [12, 18, 10, 20, 15] + [12] * 3)
+    before = [entry.to_dict() for entry in fuel.get_history(PLATE)]
+    assert fuel.get_dashboard(PLATE)["recent_drop_percent"] == 20
+    assert not fuel.get_dashboard(PLATE)["alert_active"]
+    pattern = "Repeated" if status in ("Monitor", "Unusual drop") else "Unclear"
+    ai = RecordingAI(anomaly_status=status, pattern=pattern, baseline_assessment="Uncertain")
+    result = request_report(fuel, ai)
+    assert result["anomaly_status"] == status and result["saved"]
+    assert result["alert_active"] == (status in ("Monitor", "Unusual drop"))
+    assert [entry.to_dict() for entry in fuel.get_history(PLATE)] == before
+    again = request_report(service(tmp_path), ForbiddenAI())
+    assert again["reused"] and ai.calls == 1
+
+# AI may flag a pattern below the reference percentages; Python must not overwrite that assessment.
+def test_percentages_are_guidance_not_python_anomaly_boundaries(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [13.5] * 3)
+    assert fuel.get_dashboard(PLATE)["recent_drop_percent"] == 10
+    reply = request_report(fuel, RecordingAI(anomaly_status='Monitor', pattern='Repeated'))
+    assert reply["anomaly_status"] == "Monitor" and reply["alert_active"]
+
+# An unclear assessment is still a report we can reuse, but it should not open a new alert.
+def test_unclear_is_saved_and_reused_without_opening_a_new_alert(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    ai = RecordingAI(anomaly_status="Unclear", confidence="Low", pattern="Unclear")
+    result = request_report(fuel, ai)
+    assert result["saved"] and result["fuel_outcome"].startswith("ASSESSMENT UNCLEAR")
+    assert not result["alert_active"] and not fuel.get_dashboard(PLATE)["baseline_frozen"]
+    cached = request_report(service(tmp_path), ForbiddenAI())
+    assert cached["anomaly_status"] == "Unclear" and cached["reused"]
