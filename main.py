@@ -12,13 +12,18 @@ import logging
 from ai_manager import AIManager
 from controllers.account_controller import AccountController
 from controllers.check_controller import CheckController
+from controllers.fuel_controller import FuelController
 from controllers.history_controller import HistoryController
 from controllers.maintenance_pipeline import MaintenancePipeline
 from data_manager import DataManager
+from fuel_io_manager import FuelIOManager
 from io_manager import IOManager
 from logic.brake_history_analyser import BrakeHistoryAnalyser
+from logic.fuel_logic_manager import FuelLogicManager
 from logic.history_rules import HistoryRules
 from logic_manager import LogicManager
+from ai.fuel_ai_manager import FuelAIManager
+from storage.fuel_data_manager import FuelDataManager
 
 
 class App:
@@ -42,8 +47,16 @@ class App:
         self.__checks = CheckController(io, data, logic, rules, BrakeHistoryAnalyser(rules),
                                        pipeline, self.__history)
         self.__current_user = None
-        # Menu choice -> action. Each action takes the user and returns the user who is
-        # logged in afterwards (None = logged out). A new option is one new entry (OCP).
+
+        # Fuel is available when the four managers have the fuel extensions.
+        # Part 1 tests can still use the original manager classes on their own.
+        fuel_ready = (isinstance(io, FuelIOManager) and
+                      isinstance(data, FuelDataManager) and
+                      isinstance(ai, FuelAIManager) and
+                      isinstance(logic, FuelLogicManager))
+        self.__fuel = FuelController(io, data, ai, logic) if fuel_ready else None
+
+        # Menu choice -> action. Each action receives the logged-in user.
         self.__logged_in_actions = {
             "1": self.__history.add,
             "2": self.__history.view,
@@ -53,17 +66,18 @@ class App:
             "6": self.__checks.urgent,
             "7": self.__accounts.show_profile,
             "8": self.__accounts.update_profile,
-            "9": self.__accounts.delete_profile,
+            "9": self.__delete_profile,
             "10": self.__accounts.logout,
         }
+        if self.__fuel is not None:
+            self.__logged_in_actions["11"] = self.__fuel.run
 
     @classmethod
     def create(cls) -> App:
-        """The real application: console IO, JSON data files, live AI providers.
-        Logging is set up first, so warnings while starting (e.g. a missing API key)
-        use the same format as the rest of the app."""
+        """Create one CLI app using the existing four-manager architecture."""
         cls.__configure_logging()
-        return cls(IOManager(), DataManager(), AIManager.from_env(), LogicManager())
+        return cls(FuelIOManager(), FuelDataManager(),
+                   FuelAIManager.from_env(), FuelLogicManager())
 
     @staticmethod
     def __hide_google_notices(record: logging.LogRecord) -> bool:
@@ -75,6 +89,14 @@ class App:
         logging.basicConfig(level=logging.WARNING, format="[%(levelname)s] %(name)s: %(message)s")
         for handler in logging.getLogger().handlers:
             handler.addFilter(cls.__hide_google_notices)
+
+    # Delete fuel entries only after the original profile deletion succeeds.
+    # The Part 1 account controller still handles profiles, history and checks.
+    def __delete_profile(self, user):
+        result = self.__accounts.delete_profile(user)
+        if result is None and self.__fuel is not None:
+            self.__fuel.delete_profile_data(user.license_plate)
+        return result
 
     def __handle_logged_out(self, choice: str) -> bool:
         """Logged-out menu. Returns True when the user chose Exit."""
@@ -91,7 +113,9 @@ class App:
 
     def __handle_logged_in(self, choice: str) -> bool:
         """Logged-in menu. Returns True when the user chose Exit."""
-        if choice == "11":
+        # Part 1's original menu still exits at 11 in its existing tests.
+        exit_choice = "12" if self.__fuel is not None else "11"
+        if choice == exit_choice:
             self.__io.display_message("Goodbye!")
             return True
         action = self.__logged_in_actions.get(choice)
