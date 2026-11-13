@@ -304,11 +304,57 @@ def test_review_waits_for_enough_new_intervals(tmp_path, decision, needed, expec
     ai = RecordingAI()
     assert request_report(fuel, ai)["ai_status"] == "ok" and ai.calls == 1
 
+# An old review describes the old measurements. Editing those measurements should make that review outdated.
+def test_edit_invalidates_a_review_bound_to_old_measurements(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    fuel.review_alert(PLATE, "confirmed_fault")
+    last = fuel.get_history(PLATE)[-1]
+    fuel.update_refuel(PLATE, last.entry_id, last.refuel_date, last.odometer_km, 19)
+    result = fuel.get_dashboard(PLATE)
+    assert result["ignored_review_count"] == 1
+    assert not result["alert_active"] and result["assessment_pending"]
+    open_alert(fuel)
+    assert fuel.get_dashboard(PLATE)["alert_active"]
+
+# If the reviewed endpoint is deleted, its old decision can no longer be applied to the remaining records.
+def test_deleted_review_endpoint_cannot_silently_keep_its_decision(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    fuel.review_alert(PLATE, "confirmed_fault")
+    assert fuel.delete_refuel(PLATE, fuel.get_history(PLATE)[-1].entry_id)
+    result = fuel.get_dashboard(PLATE)
+    assert result["ignored_review_count"] == 1
+    assert result["latest_status"] == "Not assessed"
+    assert not result["analysis_ready"]
+
+# A later gap does not change an earlier alert period. We should still be able to review that period.
+def test_review_still_saves_when_a_later_record_only_starts_a_new_segment(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    missing = append(fuel, 10)
+    append(fuel, 10)
+    fuel.delete_refuel(PLATE, missing.entry_id)
+    result = fuel.review_alert(PLATE, "ordinary_variation")
+    assert not result["alert_active"] and result["ignored_review_count"] == 0
+    assert result["recent_count"] == 0
 # Review choices only make sense when there is an alert to review.
 @pytest.mark.parametrize("decision", ["ordinary_variation", "confirmed_fault", "changed_conditions"])
 def test_review_requires_an_open_alert(tmp_path, decision):
     with pytest.raises(ValueError, match="no open"):
         service(tmp_path).review_alert(PLATE, decision)
+
+# If saving the review is unsafe, leave the original file and the open alert alone.
+def test_corrupt_review_file_is_not_overwritten_and_alert_remains_open(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    path = tmp_path / "fuel_reviews.json"
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(OSError, match="alert remains open"):
+        fuel.review_alert(PLATE, "ordinary_variation")
+    assert path.read_text(encoding="utf-8") == "{broken"
+    assert fuel.get_dashboard(PLATE)["alert_active"] is True
+
 # Check fuel dates against maintenance mileage too, including earlier records and impossible jumps.
 @pytest.mark.parametrize("history_day,history_km,fuel_day,fuel_km,allowed", [
     ("01-11-2025", 50000, "05-11-2025", 2000, False),
@@ -455,6 +501,16 @@ def test_a_single_outlier_is_not_routed_as_persistent_deterioration():
                       pattern="Isolated", flagged_entry_ids=[9])
     result = FuelLogicManager().evaluate_fuel(analyse([15] * 7 + [10]), reply)
     assert result["fuel_outcome"].startswith("VERIFY")
+
+# Nine records are not always eight usable intervals: a deleted middle fill leaves a measurement gap.
+def test_deletion_can_make_nine_remaining_records_insufficient(tmp_path):
+    fuel = service(tmp_path, [15] * 9)
+    fuel.delete_refuel(PLATE, fuel.get_history(PLATE)[1].entry_id)
+    assert len(fuel.get_history(PLATE)) == 9
+    assert fuel.get_dashboard(PLATE)["interval_count"] == 7
+    result = request_report(fuel, ForbiddenAI())
+    assert result["ai_status"] == "insufficient_history"
+
 # Hold the measurements constant and change the AI reply. The anomaly category must follow the AI decision.
 @pytest.mark.parametrize("status", ["Normal", "Monitor", "Unusual drop", "Unclear"])
 def test_ai_owns_the_anomaly_category_for_the_same_evidence(tmp_path, status):
