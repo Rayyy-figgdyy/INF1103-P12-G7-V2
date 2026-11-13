@@ -201,6 +201,39 @@ def test_math_alone_does_not_decide_persistence(recent):
     assert not dashboard["alert_active"]
     assert all("status" not in point for point in dashboard["recent_individual_checks"])
 
+# Keep the original comparison while an alert is open, even after many more poor readings arrive.
+def test_persistent_deterioration_never_becomes_normal_without_review(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [12] * 3)
+    open_alert(fuel)
+    for _ in range(12):
+        append(fuel, 12)
+    result = service(tmp_path).get_dashboard(PLATE)
+    assert result["baseline_km_per_l"] == 15
+    assert result["baseline_count"] == 5
+    assert result["alert_active"] and result["assessment_pending"]
+
+# Recovery, an unclear reply or an outage must not silently close an alert that still needs a review.
+@pytest.mark.parametrize("status,new_intervals", [
+    ("Normal", 1), ("Unclear", 1), ("Normal", 3), ("unavailable", 1),
+])
+def test_new_reports_do_not_close_an_unreviewed_alert(tmp_path, status, new_intervals):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    first = open_alert(fuel)
+    for _ in range(new_intervals):
+        append(fuel, 15)
+    ai = UnavailableAI() if status == "unavailable" else RecordingAI(anomaly_status=status)
+    result = request_report(fuel, ai)
+    assert result["alert_active"] and result["baseline_frozen"]
+    if status == "unavailable":
+        assert result["ai_status"] == "unavailable" and not result["saved"]
+        assert len(FuelDataManager(data_dir=str(tmp_path)).fuel_assessments.for_plate(PLATE)) == 1
+    else:
+        assert result["anomaly_status"] == status and result["saved"]
+        expected = "ASSESSMENT UNCLEAR" if status == "Unclear" else "REVIEW OPEN ALERT"
+        assert result["fuel_outcome"].startswith(expected)
+    restored = service(tmp_path).get_dashboard(PLATE)
+    assert restored["alert_active"] and restored["baseline_km_per_l"] == 15
+    assert restored["alert"]["first_entry_id"] == first["alert"]["first_entry_id"]
 # The 15% and 20% figures are guidance. Crossing either value must not let Python label an anomaly.
 @pytest.mark.parametrize("drop", [14.9, 15, 19.9, 20, 40])
 def test_reference_percentages_do_not_create_warnings(drop):
@@ -389,3 +422,23 @@ def test_unclear_is_saved_and_reused_without_opening_a_new_alert(tmp_path):
     assert not result["alert_active"] and not fuel.get_dashboard(PLATE)["baseline_frozen"]
     cached = request_report(service(tmp_path), ForbiddenAI())
     assert cached["anomaly_status"] == "Unclear" and cached["reused"]
+def test_damaged_saved_comparison_is_not_used_or_reused(tmp_path, damage):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    path = tmp_path / "fuel_assessments.json"
+    records = json.loads(path.read_text(encoding="utf-8"))
+    records[-1]["result"]["comparison_reference"].update(damage)
+    path.write_text(json.dumps(records), encoding="utf-8")
+    assert not service(tmp_path).get_dashboard(PLATE)["alert_active"]
+    ai = RecordingAI()
+    report = request_report(fuel, ai)
+    assert ai.calls == 1 and report["saved"] and not report["reused"]
+
+# Deleting a later fill must not erase a valid alert about an earlier period.
+def test_deleting_a_later_refuel_does_not_hide_a_valid_earlier_ai_alert(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    later = append(fuel, 10)
+    fuel.delete_refuel(PLATE, later.entry_id)
+    dashboard = service(tmp_path).get_dashboard(PLATE)
+    assert dashboard["alert_active"] and dashboard["baseline_km_per_l"] == 15
