@@ -1,0 +1,65 @@
+[
+  {
+    "license_plate": "SBA1234A",
+    "data_key": "44f9804d25025a5570300c210ea9c69d38076224162e998e0de8c6fc488dae47",
+    "saved_at": "2026-11-13T17:42:17.626201+00:00",
+    "result": {
+      "ai_status": "ok",
+      "numeric_status": "Potential abnormal consumption",
+      "baseline_frozen": true,
+      "summary": "An older report without an AI anomaly decision"
+    }
+  },
+  {
+    "license_plate": "SBA1234A",
+    "data_key": "44f9804d25025a5570300c210ea9c69d38076224162e998e0de8c6fc488dae47",
+    "saved_at": "2026-11-13T17:42:17.631571+00:00",
+    "result": {
+      "anomaly_status": "Normal",
+      "trend": "Stable",
+      "confidence": "Medium",
+      "baseline_assessment": "Suitable",
+      "pattern": "No clear drop",
+      "summary": "The saved fuel pattern has been assessed; driving context is unknown.",
+      "flagged_entry_ids": [],
+      "possible_factors": [],
+      "suggested_checks": [
+        "Continue recording full-tank refuels"
+      ],
+      "ai_status": "ok",
+      "ai_provider": "Fake",
+      "analysis_version": "fuel-ai-anomaly-assessment-v3",
+      "car_model": "Honda City 2025",
+      "assessment_history_key": "9fcb53af10d82be9744bb5f1f559a6f3925ee3d323be578c9fce9552fb9aad14",
+      "assessment_context_key": "f65aa1f482236cbba0d6bba9ee68d7e9e604f0546a4c51088eeb6e3294f6b337",
+      "assessed_through_entry_id": 9,
+      "assessed_date": "09-01-2025",
+      "comparison_reference": {
+        "km_per_l": 15.0,
+        "distance_km": 1500,
+        "litres": 100.0,
+        "count": 5,
+        "entry_ids": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "range": [
+          15.0,
+          15.0
+        ]
+      },
+      "reused": false,
+      "saved": true,
+      "fuel_outcome": "NO NEW UNUSUAL DROP - Continue recording full-tank refuels",
+      "ai_anomaly_status": "Normal",
+      "ai_confidence": "Medium",
+      "ai_pattern": "No clear drop",
+      "baseline_frozen": false,
+      "alert_active": false,
+      "alert": null
+    }
+  }
+]

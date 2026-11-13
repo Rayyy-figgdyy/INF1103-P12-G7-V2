@@ -1,0 +1,18 @@
+[
+  {
+    "entry_id": 1,
+    "license_plate": "SBA1234A",
+    "refuel_date": "01-01-2025",
+    "odometer_km": 10000,
+    "litres": 20.0,
+    "segment_start": false
+  },
+  {
+    "entry_id": 2,
+    "license_plate": "SBA1234A",
+    "refuel_date": "02-01-2025",
+    "odometer_km": 10300,
+    "litres": 20.0,
+    "segment_start": false
+  }
+]

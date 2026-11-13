@@ -1,0 +1,10 @@
+[
+  {
+    "entry_id": 1,
+    "license_plate": "SBA1234A",
+    "refuel_date": "01-11-2025",
+    "odometer_km": 48000,
+    "litres": 20.0,
+    "segment_start": false
+  }
+]

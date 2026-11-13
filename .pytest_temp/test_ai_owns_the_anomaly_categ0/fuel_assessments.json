@@ -1,0 +1,54 @@
+[
+  {
+    "license_plate": "SBA1234A",
+    "data_key": "00e61995cc8d719cd4035ae66f27d9ca05de35c8ef104385f3e2c5490f8007dc",
+    "saved_at": "2026-11-13T17:42:17.951504+00:00",
+    "result": {
+      "anomaly_status": "Normal",
+      "trend": "Stable",
+      "confidence": "Medium",
+      "baseline_assessment": "Uncertain",
+      "pattern": "Unclear",
+      "summary": "The saved fuel pattern has been assessed; driving context is unknown.",
+      "flagged_entry_ids": [],
+      "possible_factors": [],
+      "suggested_checks": [
+        "Continue recording full-tank refuels"
+      ],
+      "ai_status": "ok",
+      "ai_provider": "Fake",
+      "analysis_version": "fuel-ai-anomaly-assessment-v3",
+      "car_model": "Honda City 2025",
+      "assessment_history_key": "cb4dcbef683bfcb17d52510b101ca6404b1cab1b2ad6f0f41b996572c38fdb20",
+      "assessment_context_key": "ece4ba2bfeececb0bd3c920c79218f80e586d8e90cd59a9c91ad2114c01e3915",
+      "assessed_through_entry_id": 9,
+      "assessed_date": "09-01-2025",
+      "comparison_reference": {
+        "km_per_l": 15.0,
+        "distance_km": 1500,
+        "litres": 100.0,
+        "count": 5,
+        "entry_ids": [
+          2,
+          3,
+          4,
+          5,
+          6
+        ],
+        "range": [
+          10.0,
+          20.0
+        ]
+      },
+      "reused": false,
+      "saved": true,
+      "fuel_outcome": "NO NEW UNUSUAL DROP - Continue recording full-tank refuels",
+      "ai_anomaly_status": "Normal",
+      "ai_confidence": "Medium",
+      "ai_pattern": "Unclear",
+      "baseline_frozen": false,
+      "alert_active": false,
+      "alert": null
+    }
+  }
+]
