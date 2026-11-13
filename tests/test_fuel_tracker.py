@@ -244,6 +244,71 @@ def test_reference_percentages_do_not_create_warnings(drop):
     assert not result["alert_active"]
     assert not hasattr(FuelEfficiencyAnalyser, "classify_drop")
 
+# Ordinary variation stays in history. Restarting the tracker must not reopen the same reviewed period.
+def test_ordinary_variation_review_retains_records_and_does_not_reopen_on_old_readings(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    before = [entry.to_dict() for entry in fuel.get_history(PLATE)]
+    result = fuel.review_alert(PLATE, "ordinary_variation")
+    assert result["assessment_pending"]
+    assert result["alert_active"] is False
+    assert result["reviewed_ordinary_intervals"] == 3
+    assert [entry.to_dict() for entry in fuel.get_history(PLATE)] == before
+    restarted = service(tmp_path)
+    assert restarted.get_dashboard(PLATE)["alert_active"] is False
+    append(restarted, 15)
+    result = restarted.get_dashboard(PLATE)
+    assert result["alert_active"] is False
+    assert result["baseline_count"] == 6
+    assert result["ignored_review_count"] == 0
+
+# A fault period stays in the overall history, but it must not lower the healthy comparison average.
+def test_confirmed_fault_review_excludes_period_only_from_baseline(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    result = fuel.review_alert(PLATE, "confirmed_fault")
+    assert result["excluded_fault_intervals"] == 3
+    assert result["overall_average_km_per_l"] == 13.12
+    assert len(fuel.get_history(PLATE)) == 9
+    assert result["recent_count"] == 0
+    restarted = service(tmp_path)
+    append(restarted, 15)
+    result = restarted.get_dashboard(PLATE)
+    assert result["baseline_km_per_l"] == 15
+    assert result["alert_active"] is False
+    assert result["recent_count"] == 1
+
+# Changed conditions need eight new intervals; a fault review needs three recent ones. AI must wait.
+@pytest.mark.parametrize("decision,needed,expected_baseline", [
+    ("changed_conditions", 8, 12), ("confirmed_fault", 3, 15),
+])
+def test_review_waits_for_enough_new_intervals(tmp_path, decision, needed, expected_baseline):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    reviewed = fuel.review_alert(PLATE, decision)
+    if decision == "changed_conditions":
+        assert reviewed["baseline_km_per_l"] is None and reviewed["intervals_needed"] == 8
+    for count in range(needed):
+        result = request_report(fuel, ForbiddenAI())
+        assert result["ai_status"] == "insufficient_history"
+        if decision == "changed_conditions":
+            assert f"needed: {needed - count}." in result["message"]
+        else:
+            assert f"Record {needed - count} more" in result["message"]
+        append(fuel, 12)
+    ready = service(tmp_path).get_dashboard(PLATE)
+    assert ready["baseline_km_per_l"] == expected_baseline and ready["baseline_count"] == 5
+    assert not ready["alert_active"]
+    if decision == "changed_conditions":
+        assert ready["latest_status"] == "Not assessed"
+    ai = RecordingAI()
+    assert request_report(fuel, ai)["ai_status"] == "ok" and ai.calls == 1
+
+# Review choices only make sense when there is an alert to review.
+@pytest.mark.parametrize("decision", ["ordinary_variation", "confirmed_fault", "changed_conditions"])
+def test_review_requires_an_open_alert(tmp_path, decision):
+    with pytest.raises(ValueError, match="no open"):
+        service(tmp_path).review_alert(PLATE, decision)
 # Check fuel dates against maintenance mileage too, including earlier records and impossible jumps.
 @pytest.mark.parametrize("history_day,history_km,fuel_day,fuel_km,allowed", [
     ("01-11-2025", 50000, "05-11-2025", 2000, False),
@@ -422,6 +487,16 @@ def test_unclear_is_saved_and_reused_without_opening_a_new_alert(tmp_path):
     assert not result["alert_active"] and not fuel.get_dashboard(PLATE)["baseline_frozen"]
     cached = request_report(service(tmp_path), ForbiddenAI())
     assert cached["anomaly_status"] == "Unclear" and cached["reused"]
+
+# Once a period is reviewed as ordinary variation, AI must not reopen it using those same interval IDs.
+def test_an_ordinary_review_prevents_ai_from_reopening_the_same_interval_ids(tmp_path):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    fuel.review_alert(PLATE, "ordinary_variation")
+    assert fuel.get_dashboard(PLATE)["eligible_alert_entry_ids"] == []
+    provider = Provider(json.dumps(ai_answer(anomaly_status="Unusual drop", flagged_entry_ids=[9])))
+    result = request_report(fuel, FuelAIManager([provider], retry_delay=0))
+    assert result["ai_status"] == "unavailable" and not fuel.get_dashboard(PLATE)["alert_active"]
 def test_damaged_saved_comparison_is_not_used_or_reused(tmp_path, damage):
     fuel = service(tmp_path, [15] * 5 + [10] * 3)
     open_alert(fuel)
