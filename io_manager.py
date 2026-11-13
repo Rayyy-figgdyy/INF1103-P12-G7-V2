@@ -590,3 +590,94 @@ Logged in: {name} | {plate} | {car_model}
                   f"{self.km(entry.get('service_odometer')):>10}  "
                   f"{urgency_text:<8}{checked:<12}{outcome[:33]:<34}"
                   f"{entry.get('notes') or ''}")
+
+    # -------------------------------------------------------- fuel tracker (CLI)
+
+    # The fuel feature stays in the terminal, like the Part 1 menus.
+    def prompt_fuel_menu(self) -> str:
+        print("\n--- Fuel Consumption Tracker ---")
+        print("All entries must be FULL-tank refuels. No partial fills between them.")
+        print("Use the same stopping level each time, such as the first automatic pump cut-off.")
+        print("1) Add refuel")
+        print("2) View fuel history and running average")
+        print("3) Edit refuel")
+        print("4) Delete refuel")
+        print("5) Analyse fuel efficiency with AI")
+        print("6) Review an open fuel alert")
+        print("7) Back to main menu")
+        return input("Choose option: ").strip()
+
+    # Ask for only three inputs. Enter keeps old values when editing.
+    def prompt_fuel_entry(self, current=None) -> dict:
+        if current is None:
+            print("\n--- Add full-tank refuel ---")
+            date = self.prompt_past_date("Refuel date")
+            km = self.prompt_km("Odometer (km)")
+            litres = self.prompt_fuel_litres("Fuel pumped (litres)")
+            return {"refuel_date": date, "odometer_km": km, "litres": litres}
+
+        print("\n--- Edit refuel (Enter keeps the old value) ---")
+        while True:
+            typed = input(f"Date [{current.refuel_date}]: ").strip()
+            if not typed:
+                date = current.refuel_date
+                break
+            parsed = self.parse_date(typed)
+            if parsed is not None and self.date_problem(parsed, None) is None:
+                date = parsed.strftime(self.DATE_FORMAT)
+                break
+            print("  -> Use a real date (DD-MM-YYYY) that is not in the future.")
+
+        while True:
+            typed = input(f"Odometer [{current.odometer_km:,} km]: ").strip().replace(",", "")
+            if not typed:
+                km = current.odometer_km
+                break
+            if typed.isascii() and typed.isdigit() and int(typed) <= self.MAX_ODOMETER_KM:
+                km = int(typed)
+                break
+            print("  -> Enter a whole number of kilometres.")
+
+        litres = self.prompt_fuel_litres("Fuel pumped (litres)", current.litres)
+        return {"refuel_date": date, "odometer_km": km, "litres": litres}
+
+    # Ask for a valid fuel amount; allow Enter to keep it when editing.
+    def prompt_fuel_litres(self, label: str, current: float | None = None) -> float:
+        while True:
+            hint = f" [{current:g}]" if current is not None else ""
+            typed = input(f"{label}{hint}: ").strip()
+            if not typed and current is not None:
+                return current
+            try:
+                litres = float(typed)
+            except ValueError:
+                print("  -> Enter a number, such as 25.5.")
+                continue
+            if 0 < litres <= 200 and litres != float("inf"):
+                return litres
+            print("  -> Litres must be more than 0 and no more than 200.")
+
+    # Choose a refuel by its list number, or zero to cancel.
+    def prompt_fuel_choice(self, entries, action: str):
+        if not entries:
+            print("\nNo fuel records yet.")
+            return None
+        self.display_fuel_history(entries)
+        while True:
+            typed = input(f"Which refuel to {action}? (0 = back): ").strip()
+            if typed == "0":
+                return None
+            if typed.isascii() and typed.isdigit() and 1 <= int(typed) <= len(entries):
+                return entries[int(typed)-1]
+            print(f"  -> Enter a number from 1 to {len(entries)}, or 0.")
+
+    # Show fuel records. The first record is a measurement starting point.
+    def display_fuel_history(self, entries) -> None:
+        if not entries:
+            print("\nNo fuel records yet.")
+            return
+        print("\n--- Full-tank refuelling history ---")
+        print(f"{'No.':<5}{'Date':<14}{'Odometer':>12}  {'Litres':>9}")
+        for number, entry in enumerate(entries, 1):
+            print(f"{number:<5}{entry.refuel_date:<14}{entry.odometer_km:>12,}  {entry.litres:>9.2f}")
+
