@@ -101,3 +101,79 @@ class FuelService:
         raw = json.dumps([entry.to_dict() for entry in history], sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+    # Later refuels preserve valid reviews; editing their source records invalidates them.
+    def __valid_reviews(self, license_plate: str, history: list[FuelEntry]) -> tuple[list[dict], int]:
+        if self.__reviews is None:
+            return [], 0
+        valid = []
+        ignored = 0
+        for review in self.__reviews.for_plate(license_plate):
+            position = next((index for index, entry in enumerate(history)
+                             if entry.entry_id == review["through_entry_id"]), None)
+            if position is not None and self.history_key(history[:position + 1]) == review["history_key"]:
+                valid.append(review)
+            else:
+                ignored += 1
+        return valid, ignored
+
+    # Old numerical-warning reports cannot create alerts under the new AI contract.
+    def __valid_assessments(self, license_plate: str, history: list[FuelEntry]) -> list[dict]:
+        if self.__assessments is None:
+            return []
+        valid = []
+        by_id = {point["entry_id"]: point for point in self.__analyser.measure(history)}
+        for record in self.__assessments.for_plate(license_plate):
+            result = record.get("result")
+            if (not isinstance(result, dict) or result.get("ai_status") != "ok"
+                    or result.get("analysis_version") != self.ANALYSIS_VERSION
+                    or FuelAIAdvisor.validate_result(result) is None):
+                continue
+            through_id = result.get("assessed_through_entry_id")
+            if isinstance(through_id, bool) or not isinstance(through_id, int) or through_id not in by_id:
+                continue
+            through = by_id[through_id]
+            reference = result.get("comparison_reference")
+            if not self.__alerts.valid_reference(reference, by_id):
+                continue
+            if any(by_id[entry_id]["position"] >= through["position"] - 2
+                   for entry_id in reference["entry_ids"]):
+                continue
+            if any(entry_id not in by_id or by_id[entry_id]["segment"] != through["segment"]
+                   or not through["position"] - 2 <= by_id[entry_id]["position"] <= through["position"]
+                   for entry_id in result["flagged_entry_ids"]):
+                continue
+            position = next((index for index, entry in enumerate(history)
+                             if entry.entry_id == through_id), None)
+            if (position is not None and result.get("assessment_history_key")
+                    == self.history_key(history[:position + 1])
+                    and result.get("assessed_date") == history[position].refuel_date
+                    and isinstance(result.get("car_model"), str)
+                    and isinstance(result.get("assessment_context_key"), str)
+                    and len(result["assessment_context_key"]) == 64
+                    and all(letter in "0123456789abcdef" for letter in result["assessment_context_key"])):
+                valid.append(dict(result))
+        return valid
+
+    # Send maintenance facts without names, licence plates or free-text notes.
+    def __maintenance_context(self, license_plate: str) -> list[dict]:
+        if self.__maintenance_history is None:
+            return []
+        fields = ("part_name", "service_date", "service_odometer", "service_action")
+        return [{key: record[key] for key in fields if key in record}
+                for record in self.__maintenance_history.for_plate(license_plate)
+                if isinstance(record, dict)]
+
+    # Only input changes invalidate reuse; opening the saved assessment's alert does not.
+    @classmethod
+    def context_key(cls, dashboard: dict) -> str:
+        relevant = {"version": cls.ANALYSIS_VERSION, "history": dashboard["refuel_history"],
+                    "reviews": dashboard["reviews"], "maintenance_history": dashboard["maintenance_history"],
+                    "reference_percentages": dashboard["thresholds"]}
+        return hashlib.sha256(json.dumps(relevant, sort_keys=True).encode("utf-8")).hexdigest()
+
+    # The selected car model is also part of the report-reuse check.
+    @classmethod
+    def data_key(cls, dashboard: dict, car_model: str) -> str:
+        raw = json.dumps({"context": cls.context_key(dashboard), "car_model": car_model}, sort_keys=True)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
