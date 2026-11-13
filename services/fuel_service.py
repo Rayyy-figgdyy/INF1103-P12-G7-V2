@@ -215,3 +215,55 @@ class FuelService:
             raise OSError("Could not save the review. The alert remains open.")
         return self.get_dashboard(license_plate)
 
+    # Validate, reuse a matching saved assessment, or request one new AI assessment.
+    def analyse_with_ai(self, license_plate: str, ai_manager,
+                        car_model: str, logic_manager, before_request=None) -> dict:
+        dashboard = self.get_dashboard(license_plate, car_model)
+        if dashboard["analysis_problem"]:
+            return {"ai_status": "insufficient_history", "ai_provider": "none",
+                    "message": dashboard["analysis_problem"], "saved": False, "reused": False}
+        if self.__assessments is None:
+            raise ValueError("Fuel assessment storage was not provided.")
+        key = self.data_key(dashboard, car_model)
+        history = self.get_history(license_plate)
+        history_key = self.history_key(history)
+        cached = self.__assessments.find_repeat(license_plate, key)
+        if (cached is not None and cached.get("analysis_version") == self.ANALYSIS_VERSION
+                and cached.get("assessment_history_key") == history_key
+                and cached.get("assessment_context_key") == self.context_key(dashboard)
+                and cached.get("car_model") == car_model
+                and cached in dashboard["assessment_events"]
+                and FuelAIAdvisor.validate_result(cached, dashboard) is not None):
+            return {**cached, "reused": True}
+        if before_request is not None:
+            before_request()
+        try:
+            raw = ai_manager.analyse_fuel(dashboard, car_model)
+        except (OSError, ValueError, RuntimeError, TypeError):
+            raw = None
+        valid = FuelAIAdvisor.validate_result(raw, dashboard) if isinstance(raw, dict) and raw.get("ai_status") == "ok" else None
+        if valid is None:
+            unavailable = {"ai_status": "unavailable", "ai_provider": "none",
+                           "message": "AI could not complete a valid fuel assessment. Measurements remain available."}
+            return {**unavailable, **logic_manager.evaluate_fuel(dashboard, unavailable),
+                    "saved": False, "reused": False}
+        result = {**valid, "ai_status": "ok", "ai_provider": raw.get("ai_provider", "AI"),
+                  "analysis_version": self.ANALYSIS_VERSION, "car_model": car_model,
+                  "assessment_history_key": history_key,
+                  "assessment_context_key": self.context_key(dashboard),
+                  "assessed_through_entry_id": history[-1].entry_id,
+                  "assessed_date": history[-1].refuel_date,
+                  "comparison_reference": dashboard["comparison_reference"],
+                  "reused": False, "saved": True}
+        points = self.__analyser.measure(history)
+        state = self.__alerts.restore(points, dashboard["reviews"], dashboard["assessment_events"] + [result])
+        assessed = {**dashboard, **self.__analyser.summarise(points, len(history), state)}
+        result.update(logic_manager.evaluate_fuel(assessed, result))
+        try:
+            result["saved"] = self.__assessments.save(license_plate, key, result)
+        except OSError:
+            result["saved"] = False
+        if not result["saved"]:
+            result.update(logic_manager.evaluate_fuel(dashboard, result))
+            result["message"] = "AI replied, but the report and any new alert could not be saved. Try again."
+        return result
