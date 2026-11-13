@@ -787,3 +787,36 @@ Logged in: {name} | {plate} | {car_model}
                 return decisions[choice]
             print("  -> Choose 1, 2, 3 or 0.")
 
+    # Keep the AI summary concise and separate from the full history screen.
+    def display_fuel_ai(self, result: dict) -> None:
+        if result.get("ai_status") == "insufficient_history":
+            print("\n" + result["message"])
+            return
+        if result.get("ai_status") != "ok":
+            print("\nAI report unavailable:", result.get("message", "Please try again."))
+            self.__display_fuel_text("Next step: ", self.__fuel_next_step(
+                result.get("fuel_outcome", "Try the AI assessment again.")))
+            return
+        print("\n--- Fuel AI summary ---")
+        status = result["anomaly_status"]
+        pattern = result.get("pattern", "Unclear")
+        detail = f" ({pattern.lower()} pattern)" if status in ("Monitor", "Unusual drop") else ""
+        print(f"Assessment: {status}{detail}")
+        self.__display_fuel_text("Summary: ", result.get("summary", ""))
+        print("Confidence in fuel pattern:", result.get("confidence", "Unknown"))
+        needs_checks = status != "Normal"
+        if needs_checks and result.get("possible_factors"):
+            print("Possible explanations (unconfirmed):")
+            for factor in result["possible_factors"]:
+                self.__display_fuel_text(" - ", factor)
+        steps = [self.__fuel_next_step(result.get("fuel_outcome", "Review the fuel results."))]
+        if needs_checks:
+            steps.extend(result.get("suggested_checks", []))
+        print("Next steps:")
+        for step in dict.fromkeys(steps):
+            self.__display_fuel_text(" - ", step)
+        if result.get("alert_active"):
+            alert = result["alert"]
+            print(f"Open AI alert: {alert['first_date']} to {alert['last_date']}. Review using fuel option 6.")
+        if result.get("message"):
+            self.__display_fuel_text("Note: ", result["message"])
