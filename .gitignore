@@ -16,3 +16,12 @@ data/users.json
 data/maintenance_history.json
 data/prompt_records.json
 data/*.tmp
+
+# Keep personal fuel records and review decisions out of Git.
+data/fuel_history.json
+data/fuel_assessments.json
+data/fuel_reviews.json
+data/fuel_*.json.tmp
+
+# Temporary pytest output
+.pytest_temp*/
