@@ -47,6 +47,40 @@ def readings(intervals):
 def analyse(efficiencies):
     return FuelEfficiencyAnalyser().analyse(readings([(round(value * 20), 20) for value in efficiencies]))
 
+# Each test gets its own folder. Pass values to start with fuel history, or leave it empty.
+def service(tmp_path, values=None, history=None):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    fuel = FuelService(data.fuel, data.fuel_assessments,
+                       maintenance_history=data.history if history is None else history,
+                       maintenance_rules=HistoryRules(), reviews=data.fuel_reviews)
+    if values is not None:
+        seed(fuel, values)
+    return fuel
+
+# Save the readings through the real service so its normal validation still runs.
+def seed(fuel, efficiencies):
+    entries = readings([(round(value * 20), 20) for value in efficiencies])
+    for entry in entries:
+        fuel.add_refuel(PLATE, entry.refuel_date, entry.odometer_km, entry.litres)
+
+# Add the next day's full refuel without repeating date and odometer calculations in every test.
+def append(fuel, efficiency=15):
+    last = fuel.get_history(PLATE)[-1]
+    day = (datetime.strptime(last.refuel_date, "%d-%m-%Y") + timedelta(days=1)).strftime("%d-%m-%Y")
+    return fuel.add_refuel(PLATE, day, last.odometer_km + round(efficiency * 20), 20)
+
+# A small stand-in for saved maintenance records; it still separates vehicles by plate.
+class History:
+    def __init__(self, records):
+        self.records = records
+
+    def for_plate(self, plate):
+        return [record for record in self.records if record["license_plate"] == plate]
+
+# Use the same maintenance record shape that the real tracker expects.
+def maintenance(day, km, plate=PLATE):
+    return {"license_plate": plate, "part_name": "Engine Oil", "service_date": day,
+            "service_odometer": km, "service_action": "replace", "notes": "private note"}
 # One starting fill does not create an interval. We need eight usable intervals before assessment.
 @pytest.mark.parametrize("count", range(8))
 def test_incomplete_history_cannot_be_assessed(count):
@@ -107,3 +141,72 @@ def test_reference_percentages_do_not_create_warnings(drop):
     assert result["latest_status"] == "Not assessed"
     assert not result["alert_active"]
     assert not hasattr(FuelEfficiencyAnalyser, "classify_drop")
+
+# Check fuel dates against maintenance mileage too, including earlier records and impossible jumps.
+@pytest.mark.parametrize("history_day,history_km,fuel_day,fuel_km,allowed", [
+    ("01-11-2025", 50000, "05-11-2025", 2000, False),
+    ("05-11-2025", 50000, "01-11-2025", 48000, True),
+    ("01-11-2025", 50000, "01-11-2025", 50000, True),
+    ("09-11-2025", 50000, "01-11-2025", 52000, False),
+    ("01-11-2025", 50000, "02-11-2025", 80000, False),
+])
+def test_fuel_validation_considers_maintenance_dates_and_mileage(
+        tmp_path, history_day, history_km, fuel_day, fuel_km, allowed):
+    fuel = service(tmp_path, history=History([maintenance(history_day, history_km)]))
+    if allowed:
+        assert fuel.add_refuel(PLATE, fuel_day, fuel_km, 20).odometer_km == fuel_km
+    else:
+        with pytest.raises(ValueError, match="maintenance history"):
+            fuel.add_refuel(PLATE, fuel_day, fuel_km, 20)
+        assert fuel.get_history(PLATE) == []
+
+# Another vehicle's mileage is unrelated and must not block this driver's refuel.
+def test_other_vehicles_maintenance_does_not_block_a_refuel(tmp_path):
+    fuel = service(tmp_path, history=History([maintenance("01-11-2025", 50000, "OTHER")]))
+    assert fuel.add_refuel(PLATE, "05-11-2025", 2000, 20).odometer_km == 2000
+
+# A rejected edit must leave the previously saved measurement unchanged.
+def test_edit_rejects_backwards_mileage_without_changing_saved_values(tmp_path):
+    fuel = service(tmp_path, history=History([maintenance("01-11-2025", 50000)]))
+    old = fuel.add_refuel(PLATE, "02-11-2025", 50100, 20)
+    with pytest.raises(ValueError, match="maintenance history"):
+        fuel.update_refuel(PLATE, old.entry_id, old.refuel_date, 2000, 20)
+    assert fuel.get_history(PLATE)[0].odometer_km == 50100
+
+# Try bad dates, invalid odometers, zero fuel, NaN and infinity before any record reaches storage.
+@pytest.mark.parametrize("changes", [
+    {"refuel_date": "31-02-2025"}, {"refuel_date": "2025-01-01"},
+    {"odometer_km": -1}, {"odometer_km": True}, {"odometer_km": 2_000_001},
+    {"odometer_km": 12.5}, {"litres": 0}, {"litres": -1}, {"litres": True},
+    {"litres": float("nan")}, {"litres": float("inf")}, {"litres": 201},
+    {"refuel_date": (date.today() + timedelta(days=1)).strftime("%d-%m-%Y")},
+])
+def test_invalid_measurements_are_rejected(changes):
+    fields = {"refuel_date": "01-01-2025", "odometer_km": 10000, "litres": 20}
+    fields.update(changes)
+    with pytest.raises(ValueError):
+        FuelEntry(PLATE, **fields)
+
+# A second record cannot reuse the same odometer or move backwards in date.
+def test_fuel_history_rejects_duplicates_and_reversed_dates(tmp_path):
+    fuel = service(tmp_path)
+    fuel.add_refuel(PLATE, "05-01-2025", 10000, 20)
+    for day, km in [("06-01-2025", 10000), ("04-01-2025", 10300)]:
+        with pytest.raises(ValueError):
+            fuel.add_refuel(PLATE, day, km, 20)
+
+# Deleting a fill breaks the measurement chain. Do not invent fuel use across the missing record.
+def test_delete_does_not_bridge_the_missing_refuel(tmp_path):
+    fuel = service(tmp_path, [15] * 4)
+    fuel.delete_refuel(PLATE, fuel.get_history(PLATE)[1].entry_id)
+    result = fuel.get_dashboard(PLATE)
+    assert result["interval_count"] == 2
+    assert result["total_distance_km"] == 600
+
+# Bad JSON must be reported without replacing the user's existing fuel file.
+def test_corrupt_measurement_file_is_not_overwritten(tmp_path):
+    path = tmp_path / "fuel_history.json"
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(OSError):
+        service(tmp_path).add_refuel(PLATE, "01-01-2025", 10000, 20)
+    assert path.read_text(encoding="utf-8") == "{broken"
