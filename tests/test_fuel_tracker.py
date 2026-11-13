@@ -181,6 +181,22 @@ class ForbiddenAI:
 def request_report(fuel, ai, model=CAR_MODEL, **options):
     return fuel.analyse_with_ai(PLATE, ai, model, FuelLogicManager(), **options)
 
+
+# Run the actual login and menus with typed answers supplied by the test.
+# Copying cars.json is safe here: it is read-only reference data, not a user's history.
+def run_app(tmp_path, monkeypatch, answers, values=None):
+    project = Path(__file__).resolve().parents[1]
+    shutil.copy(project / "data" / "cars.json", tmp_path / "cars.json")
+    data = FuelDataManager(data_dir=str(tmp_path), project_dir=str(project))
+    assert data.users.save(UserProfile("Fuel Test", PLATE, CAR_MODEL, "Brand New", "01-01-2030"))
+    if values is not None:
+        service(tmp_path, values)
+    provider = Provider(json.dumps(ai_answer()))
+    answers = iter(answers)
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    App(FuelIOManager(), data, FuelAIManager([provider], retry_delay=0), FuelLogicManager()).run()
+    return data, provider
+
 # Open a real saved alert using a fake AI decision, ready for the review and recovery tests.
 def open_alert(fuel):
     ai = RecordingAI(anomaly_status="Unusual drop", pattern="Repeated",
@@ -188,6 +204,7 @@ def open_alert(fuel):
     result = request_report(fuel, ai)
     assert result["ai_status"] == "ok" and result["saved"] and result["alert_active"]
     return result
+
 # One starting fill does not create an interval. We need eight usable intervals before assessment.
 @pytest.mark.parametrize("count", range(8))
 def test_incomplete_history_cannot_be_assessed(count):
@@ -649,6 +666,33 @@ def test_failed_requests_and_failed_saves_do_not_become_cached_reports(tmp_path,
     else:
         assert not path.exists()
 
+# Use the real login and menus to check that the first fill saves and early analysis returns safely.
+def test_real_menu_saves_a_first_refuel_and_blocks_early_analysis(tmp_path, monkeypatch, capsys):
+    data, provider = run_app(tmp_path, monkeypatch,
+                            ["1", PLATE, "11", "1", "01-01-2025", "50,000", "32.5", "5", "2", "7", "12"])
+    output = capsys.readouterr().out
+    assert len(data.fuel.for_plate(PLATE)) == 1 and provider.calls == 0
+    entry = data.fuel.for_plate(PLATE)[0]
+    assert (entry.refuel_date, entry.odometer_km, entry.litres) == ("01-01-2025", 50000, 32.5)
+    assert "Fuel Consumption Tracker" in output and "Not enough valid fuel history" in output
+    assert "AI report unavailable" not in output and "Goodbye!" in output
+
+# Try every record count below nine. None should call AI, save a report or display a new-request notice.
+@pytest.mark.parametrize("record_count", range(9))
+def test_empty_and_partial_history_returns_before_any_ai_call(tmp_path, record_count):
+    values = [15] * (record_count - 1) if record_count else None
+    fuel = service(tmp_path, values)
+    notices = []
+    result = request_report(fuel, ForbiddenAI(), before_request=lambda: notices.append("new request"))
+    assert result["ai_status"] == "insufficient_history"
+    assert not result["saved"] and not result["reused"] and notices == []
+    assert not (tmp_path / "fuel_assessments.json").exists()
+    if record_count == 0:
+        assert "No fuel records yet" in result["message"]
+    else:
+        assert "normally 9 full refuel records" in result["message"]
+        assert f"needed: {9 - record_count}." in result["message"]
+
 # A matching saved report cannot bypass the minimum-history check.
 def test_validation_also_blocks_an_old_learning_period_report(tmp_path):
     data = FuelDataManager(data_dir=str(tmp_path))
@@ -690,6 +734,44 @@ def test_deletion_can_make_nine_remaining_records_insufficient(tmp_path):
     assert fuel.get_dashboard(PLATE)["interval_count"] == 7
     result = request_report(fuel, ForbiddenAI())
     assert result["ai_status"] == "insufficient_history"
+
+# With no records, show the reason and return to the menu without progress text or a saved-report notice.
+def test_real_menu_empty_analysis_shows_the_reason_without_requesting_ai(tmp_path, monkeypatch, capsys):
+    _, provider = run_app(tmp_path, monkeypatch, ["1", PLATE, "11", "5", "7", "12"])
+    output = capsys.readouterr().out
+    assert "No fuel records yet" in output and "Goodbye!" in output and provider.calls == 0
+    assert all(text not in output for text in (
+        "AI report unavailable", "Generating a new AI report", "Report previously generated",
+        "Checking fuel history", "A new AI request may take a moment"))
+
+# The second Analyse selection should show the saved report immediately and should not print the fuel table again.
+def test_real_menu_generates_once_and_then_shows_the_saved_report(tmp_path, monkeypatch, capsys):
+    _, provider = run_app(tmp_path, monkeypatch, ["1", PLATE, "11", "5", "5", "7", "12"],
+                         values=[15] * 5 + [12] * 3)
+    output = capsys.readouterr().out
+    assert provider.calls == 1 and output.count("Generating a new AI report...") == 1
+    assert output.count("Report previously generated. No data has changed; showing saved report.") == 1
+    assert output.count("--- Fuel AI summary ---") == 2
+    assert all(text not in output for text in (
+        "--- Fuel consumption history ---", "Checking fuel history and saved report",
+        "A new AI request may take a moment", "Individual status at the time", "Baseline: Updating"))
+    first = output.index("--- Fuel AI summary ---")
+    saved = output.index("Report previously generated.")
+    second = output.index("--- Fuel AI summary ---", first + 1)
+    assert first < saved < second and "Goodbye!" in output
+
+# Two failed Analyse attempts should show two real failures, not claim that a saved report was reused.
+def test_failed_ai_request_is_not_described_as_a_saved_report(tmp_path, monkeypatch, capsys):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    seed(service(tmp_path), [15] * 8)
+    choices = iter(["5", "5", "7"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(choices))
+    ai = UnavailableAI()
+    FuelController(FuelIOManager(), data, ai, FuelLogicManager()).run(User())
+    output = capsys.readouterr().out
+    assert ai.calls == 2 and output.count("Generating a new AI report...") == 2
+    assert "Report previously generated" not in output
+    assert output.count("AI report unavailable:") == 2
 
 # Hold the measurements constant and change the AI reply. The anomaly category must follow the AI decision.
 @pytest.mark.parametrize("status", ["Normal", "Monitor", "Unusual drop", "Unclear"])
