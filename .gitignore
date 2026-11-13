@@ -22,3 +22,6 @@ data/fuel_history.json
 data/fuel_assessments.json
 data/fuel_reviews.json
 data/fuel_*.json.tmp
+
+# Temporary pytest output
+.pytest_temp*/
