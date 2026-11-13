@@ -177,3 +177,41 @@ class FuelService:
         raw = json.dumps({"context": cls.context_key(dashboard), "car_model": car_model}, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+    # Restore saved AI decisions, then calculate measurements without making new decisions.
+    def get_dashboard(self, license_plate: str, car_model: str | None = None) -> dict:
+        history = self.get_history(license_plate)
+        reviews, ignored = self.__valid_reviews(license_plate, history)
+        assessments = self.__valid_assessments(license_plate, history)
+        points = self.__analyser.measure(history)
+        state = self.__alerts.restore(points, reviews, assessments)
+        dashboard = self.__analyser.summarise(points, len(history), state)
+        dashboard.update({"refuel_history": [entry.to_dict() for entry in history],
+                          "reviews": reviews, "ignored_review_count": ignored,
+                          "maintenance_history": self.__maintenance_context(license_plate),
+                          "assessment_events": assessments})
+        latest = dashboard["latest_ai_assessment"]
+        dashboard["assessment_pending"] = (latest is None
+            or latest.get("assessment_context_key") != self.context_key(dashboard)
+            or (car_model is not None and latest.get("car_model") != car_model))
+        return dashboard
+
+    # A user reviews the whole AI-opened period; original measurements are retained.
+    def review_alert(self, license_plate: str, decision: str) -> dict:
+        if decision not in FuelReviewRepository.DECISIONS:
+            raise ValueError("Choose ordinary variation, confirmed fault or changed conditions.")
+        if self.__reviews is None:
+            raise ValueError("Fuel review storage is unavailable.")
+        dashboard = self.get_dashboard(license_plate)
+        alert = dashboard["alert"]
+        if alert is None:
+            raise ValueError("There is no open fuel alert to review.")
+        history = self.get_history(license_plate)
+        position = next(index for index, entry in enumerate(history)
+                        if entry.entry_id == alert["through_entry_id"])
+        review = {"license_plate": license_plate.strip().upper(), "decision": decision,
+                  "first_entry_id": alert["first_entry_id"], "through_entry_id": alert["through_entry_id"],
+                  "history_key": self.history_key(history[:position + 1])}
+        if not self.__reviews.save(review):
+            raise OSError("Could not save the review. The alert remains open.")
+        return self.get_dashboard(license_plate)
+
