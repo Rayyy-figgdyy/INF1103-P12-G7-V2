@@ -163,6 +163,7 @@ class MenuIO:
 class User:
     license_plate = PLATE
     car_model = CAR_MODEL
+
 # Act like an unavailable AI service while recording how many requests were attempted.
 class UnavailableAI:
     def __init__(self):
@@ -289,6 +290,7 @@ def test_new_reports_do_not_close_an_unreviewed_alert(tmp_path, status, new_inte
     restored = service(tmp_path).get_dashboard(PLATE)
     assert restored["alert_active"] and restored["baseline_km_per_l"] == 15
     assert restored["alert"]["first_entry_id"] == first["alert"]["first_entry_id"]
+
 # The 15% and 20% figures are guidance. Crossing either value must not let Python label an anomaly.
 @pytest.mark.parametrize("drop", [14.9, 15, 19.9, 20, 40])
 def test_reference_percentages_do_not_create_warnings(drop):
@@ -393,6 +395,7 @@ def test_review_still_saves_when_a_later_record_only_starts_a_new_segment(tmp_pa
     result = fuel.review_alert(PLATE, "ordinary_variation")
     assert not result["alert_active"] and result["ignored_review_count"] == 0
     assert result["recent_count"] == 0
+
 # Review choices only make sense when there is an alert to review.
 @pytest.mark.parametrize("decision", ["ordinary_variation", "confirmed_fault", "changed_conditions"])
 def test_review_requires_an_open_alert(tmp_path, decision):
@@ -759,6 +762,67 @@ def test_real_menu_generates_once_and_then_shows_the_saved_report(tmp_path, monk
     saved = output.index("Report previously generated.")
     second = output.index("--- Fuel AI summary ---", first + 1)
     assert first < saved < second and "Goodbye!" in output
+
+# Show every measurement, but clearly distinguish the latest 10 km/L interval from the three-interval average.
+def test_fuel_history_shows_all_measurements_and_distinguishes_single_from_three(tmp_path, capsys):
+    fuel = service(tmp_path, [15] * 7 + [10])
+    FuelIOManager().display_fuel_dashboard(fuel.get_dashboard(PLATE))
+    output = capsys.readouterr().out
+    history = output.split("Running average =", 1)[0]
+    assert all(entry.refuel_date in history for entry in fuel.get_history(PLATE))
+    assert all(label in history for label in ("Odometer km", "Litres", "Interval km/L", "Running avg km/L"))
+    assert "Most recent measured interval (ending 09-01-2025): 10.00 km/L" in output
+    assert "Average for last 3 intervals: 13.33 km/L" in output and "33.3% lower" in output
+    assert "AI assessment: not completed" in output
+    assert "Unusual drop" not in output and "Repeated unusual drop" not in output
+    assert "Individual status at the time" not in output and "Baseline: Updating" not in output
+
+# Explain that the comparison is held only when there is actually an open alert.
+@pytest.mark.parametrize("has_alert", [False, True])
+def test_comparison_notice_only_appears_for_an_open_alert(tmp_path, capsys, has_alert):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    if has_alert:
+        open_alert(fuel)
+        for _ in range(3):
+            append(fuel, 15)
+    FuelIOManager().display_fuel_dashboard(fuel.get_dashboard(PLATE))
+    output = capsys.readouterr().out
+    assert ("Comparison average held until this alert is reviewed." in output) == has_alert
+    assert ("Open AI alert:" in output) == has_alert
+    assert "Fuel check: Normal" not in output and "Baseline: Updating" not in output
+
+# Keep normal and unclear summaries readable: show confidence and next steps without another history table.
+@pytest.mark.parametrize("status", ["Normal", "Unclear"])
+def test_ai_summary_explains_the_result_without_reprinting_history(capsys, status):
+    reply = ai_answer(anomaly_status=status, confidence="Low",
+                      pattern="Unclear" if status == "Unclear" else "No clear drop")
+    reply.update(FuelLogicManager().evaluate_fuel(analyse([15] * 8), reply))
+    FuelIOManager().display_fuel_ai(reply)
+    output = capsys.readouterr().out
+    assert f"Assessment: {status}" in output and "Confidence in fuel pattern: Low" in output
+    assert "Next steps:" in output
+    assert all(label not in output for label in (
+        "Answered by:", "Trend:", "Pattern:", "Baseline assessment:", "Possible explanations",
+        "Fuel consumption history", "NO NEW UNUSUAL DROP", "Open AI alert"))
+    if status == "Unclear":
+        assert "no new alert was opened" in output
+    else:
+        assert "Continue recording full-tank refuels." in output
+
+# An unusual result still needs relevant possible causes and practical checks, without presenting them as a diagnosis.
+def test_abnormal_ai_summary_retains_relevant_causes_checks_and_follow_up(capsys):
+    reply = ai_answer(anomaly_status="Unusual drop", pattern="Isolated", flagged_entry_ids=[9],
+                      possible_factors=["A refuel measurement difference is possible"],
+                      suggested_checks=["Check the saved litres and odometer"])
+    dashboard = {**analyse([15] * 7 + [10]), "alert_active": True, "baseline_frozen": True,
+                 "alert": {"first_date": "09-01-2025", "last_date": "09-01-2025"}}
+    reply.update(FuelLogicManager().evaluate_fuel(dashboard, reply))
+    FuelIOManager().display_fuel_ai(reply)
+    output = capsys.readouterr().out
+    assert "Possible explanations (unconfirmed):" in output
+    assert reply["possible_factors"][0] in output and reply["suggested_checks"][0] in output
+    assert "fuel option 6" in output and "Arrange an inspection" not in output
+    assert all(len(line) <= 88 for line in output.splitlines())
 
 # Two failed Analyse attempts should show two real failures, not claim that a saved report was reused.
 def test_failed_ai_request_is_not_described_as_a_saved_report(tmp_path, monkeypatch, capsys):
