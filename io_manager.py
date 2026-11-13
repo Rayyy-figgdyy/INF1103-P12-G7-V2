@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import textwrap
 
 from models.user_profile import UserProfile
 
@@ -680,4 +681,109 @@ Logged in: {name} | {plate} | {car_model}
         print(f"{'No.':<5}{'Date':<14}{'Odometer':>12}  {'Litres':>9}")
         for number, entry in enumerate(entries, 1):
             print(f"{number:<5}{entry.refuel_date:<14}{entry.odometer_km:>12,}  {entry.litres:>9.2f}")
+
+    # Translate a saved AI result for display, without making an anomaly judgement.
+    @staticmethod
+    def __fuel_result_label(status: str) -> str:
+        return {"Insufficient history": "More history needed", "Not assessed": "Not assessed"}.get(status, status)
+
+    # Show a numerical improvement as higher km/L rather than a negative drop.
+    @staticmethod
+    def __fuel_change_label(drop: float) -> str:
+        if drop == 0:
+            return "No change"
+        return f"{abs(drop):.1f}% {'lower' if drop > 0 else 'higher'}"
+
+    # Keep the terminal summary readable at a normal window width.
+    @staticmethod
+    def __display_fuel_text(label: str, text: str) -> None:
+        print(textwrap.fill(str(text), width=88, initial_indent=label,
+                            subsequent_indent=" " * len(label)))
+
+    # Present the action selected from validated AI fields.
+    @staticmethod
+    def __fuel_next_step(outcome: str) -> str:
+        actions = {
+            "NO NEW UNUSUAL DROP": "Continue recording full-tank refuels.",
+            "MONITOR AND REVIEW": "Check the measurements and next interval; review the AI alert using fuel option 6.",
+            "VERIFY FUEL RECORDS": "Check the measurements and try saving the AI assessment again.",
+            "INSPECTION ADVISED": "Arrange an inspection with a qualified mechanic.",
+            "REVIEW OPEN ALERT": "Review the previous AI alert using fuel option 6.",
+            "ASSESSMENT UNCLEAR": "Review the records and continue monitoring; no new alert was opened.",
+            "NEEDS MANUAL REVIEW": "AI could not finish; measurements and any previous open alert remain available.",
+        }
+        code, separator, explanation = outcome.partition(" - ")
+        return actions.get(code, explanation if separator else outcome)
+
+    # Show measurements and saved AI state; viewing history does not assess new anomalies.
+    def display_fuel_dashboard(self, dashboard: dict) -> None:
+        points = dashboard.get("chart_points", [])
+        history = dashboard.get("refuel_history", [])
+        if not history:
+            print("\nNo fuel records yet.")
+            return
+        print("\n--- Fuel consumption history ---")
+        print(f"{'Date':<14}{'Odometer km':>12}{'Litres':>10}"
+              f"{'Interval km/L':>16}{'Running avg km/L':>19}")
+        by_id = {point["entry_id"]: point for point in points}
+        for entry in history:
+            point = by_id.get(entry["entry_id"])
+            actual = f"{point['actual_km_per_l']:.2f}" if point else "-"
+            running = f"{point['running_average_km_per_l']:.2f}" if point else "-"
+            print(f"{entry['refuel_date']:<14}{entry['odometer_km']:>12,}"
+                  f"{entry['litres']:>10.2f}{actual:>16}{running:>19}")
+        print("Running average = total measured km / total measured litres up to that refuel.")
+        print("A '-' marks a starting refuel; no consumption is estimated across missing records.")
+        if not points:
+            print("Your first full refuel sets the starting odometer. Add another full refuel for km/L.")
+            return
+        print(f"\nMost recent measured interval (ending {points[-1]['date']}): "
+              f"{dashboard['latest_km_per_l']:.2f} km/L")
+        print(f"Average across all measured intervals: {dashboard['overall_average_km_per_l']:.2f} km/L")
+        baseline = dashboard.get("baseline_km_per_l")
+        if baseline is None:
+            print("Comparison average: more history needed.")
+            print("AI assessment needs five older intervals plus three recent intervals (normally nine full refuels).")
+            print(f"More full-to-full intervals needed: {dashboard.get('intervals_needed', 8)}")
+        else:
+            print(f"Comparison average: {baseline:.2f} km/L ({dashboard['baseline_count']} older intervals)")
+            recent = dashboard.get("recent_average_km_per_l")
+            if recent is not None:
+                print(f"Average for last {dashboard['recent_count']} intervals: {recent:.2f} km/L")
+                print("Change vs comparison average:", self.__fuel_change_label(dashboard["recent_drop_percent"]))
+            for check in dashboard.get("recent_individual_checks", []):
+                print(f"  {check['date']}  {check['actual_km_per_l']:.2f} km/L  "
+                      f"{self.__fuel_change_label(check['drop_percent'])}")
+            if dashboard.get("recent_count", 0) < 3:
+                print("Three new consecutive intervals are needed for the next AI assessment.")
+        if dashboard.get("assessment_pending", True):
+            print("AI assessment: not completed for the current data. Choose fuel option 5 when ready.")
+        elif dashboard.get("latest_ai_assessment"):
+            saved = dashboard["latest_ai_assessment"]
+            print(f"Saved AI assessment (ending {saved['assessed_date']}): {saved['anomaly_status']}")
+        if dashboard.get("alert_active"):
+            alert = dashboard["alert"]
+            print(f"Open AI alert: {alert['first_date']} to {alert['last_date']}. Use fuel option 6 to review.")
+            print("Comparison average held until this alert is reviewed.")
+        if dashboard.get("last_review"):
+            print("Last period review:", dashboard["last_review"]["decision"].replace("_", " "))
+        if dashboard.get("ignored_review_count"):
+            print("Earlier reviews need rechecking because their fuel records were edited or deleted.")
+
+    # One manual decision applies to the whole open AI-alert period.
+    def prompt_fuel_review(self, alert: dict):
+        print(f"\n--- Review alert: {alert['first_date']} to {alert['last_date']} ---")
+        print("Correct any mistaken measurements with Edit refuel before reviewing.")
+        print("1) Ordinary variation - keep valid readings for future comparisons")
+        print("2) Confirmed fault period - keep history, exclude this period from the comparison average")
+        print("3) Changed driving conditions - build a new comparison average after this period")
+        print("0) Cancel")
+        decisions = {"1": "ordinary_variation", "2": "confirmed_fault", "3": "changed_conditions"}
+        while True:
+            choice = input("Review decision: ").strip()
+            if choice == "0":
+                return None
+            if choice in decisions:
+                return decisions[choice]
+            print("  -> Choose 1, 2, 3 or 0.")
 
