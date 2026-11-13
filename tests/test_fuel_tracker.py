@@ -125,6 +125,44 @@ class Provider:
             raise self.reply
         return self.reply
 
+# Supply menu choices automatically. These checks focus on the controller, so the display methods do nothing.
+class MenuIO:
+    def __init__(self):
+        self.choices = iter(["1", "2", "3", "4", "5", "6", "7"])
+        self.messages = []
+        self.results = []
+
+    def prompt_fuel_menu(self):
+        return next(self.choices)
+
+    def prompt_fuel_entry(self, old=None):
+        return {"refuel_date": "10-01-2025", "odometer_km": 12460 if old is None else 12480, "litres": 20}
+
+    def prompt_fuel_choice(self, history, action):
+        return history[-1]
+
+    def confirm_action(self, question):
+        return True
+
+    def prompt_fuel_review(self, alert):
+        return "ordinary_variation"
+
+    def display_message(self, message):
+        self.messages.append(message)
+
+    def display_fuel_dashboard(self, dashboard):
+        pass
+
+    def display_fuel_history(self, entries):
+        pass
+
+    def display_fuel_ai(self, result):
+        self.results.append(result)
+
+# The fuel menu only needs these two profile fields; full application tests use a real UserProfile.
+class User:
+    license_plate = PLATE
+    car_model = CAR_MODEL
 # Act like an unavailable AI service while recording how many requests were attempted.
 class UnavailableAI:
     def __init__(self):
@@ -538,6 +576,54 @@ def test_a_single_outlier_is_not_routed_as_persistent_deterioration():
     result = FuelLogicManager().evaluate_fuel(analyse([15] * 7 + [10]), reply)
     assert result["fuel_outcome"].startswith("VERIFY")
 
+# Bad input should be re-prompted, and the selected review should apply to the whole alert period.
+def test_cli_reasks_invalid_litres_and_accepts_a_whole_period_review(monkeypatch):
+    answers = iter(["nan", "inf", "0", "201", "25.5", "bad", "2"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    io = FuelIOManager()
+    assert io.prompt_fuel_litres("Litres") == 25.5
+    assert io.prompt_fuel_review({"first_date": "01-01-2025", "last_date": "03-01-2025"}) == "confirmed_fault"
+
+# The fuel feature should reuse the existing manager design rather than replace the rest of the application.
+def test_fuel_extensions_remain_instances_of_original_managers(tmp_path):
+    assert isinstance(FuelIOManager(), IOManager)
+    assert isinstance(FuelDataManager(data_dir=str(tmp_path)), DataManager)
+    assert isinstance(FuelAIManager([], retry_delay=0), AIManager)
+    assert isinstance(FuelLogicManager(), LogicManager)
+
+# Exercise the record and review actions with and without Analyse. Only a fresh analysis may request AI.
+@pytest.mark.parametrize("analyse_requested", [False, True])
+def test_menu_only_calls_ai_for_analyse_and_reuses_an_unchanged_report(tmp_path, analyse_requested):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    fuel = service(tmp_path, [15] * 5 + [12] * 3)
+    if not analyse_requested:
+        open_alert(fuel)
+    io = MenuIO()
+    io.choices = iter(["1", "2", "3", "4"] + (["5", "5"] if analyse_requested else []) + ["6", "7"])
+    ai = RecordingAI(anomaly_status="Unusual drop", pattern="Repeated") if analyse_requested else ForbiddenAI()
+    user = User()
+    assert FuelController(io, data, ai, FuelLogicManager()).run(user) is user
+    if analyse_requested:
+        assert ai.calls == 1 and len(io.results) == 2
+        assert any(result["reused"] for result in io.results)
+    else:
+        assert io.results == []
+    assert any("Review saved" in message for message in io.messages)
+    assert not service(tmp_path).get_dashboard(PLATE)["alert_active"]
+
+# Deleting this profile should remove its fuel records and reports while keeping the other vehicle intact.
+def test_profile_cleanup_is_scoped_to_one_vehicle(tmp_path):
+    data = FuelDataManager(data_dir=str(tmp_path))
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    open_alert(fuel)
+    fuel.review_alert(PLATE, "ordinary_variation")
+    request_report(fuel, RecordingAI())
+    fuel.add_refuel("OTHER", "01-01-2025", 5000, 20)
+    FuelController(MenuIO(), data, RecordingAI(), FuelLogicManager()).delete_profile_data(PLATE)
+    assert data.fuel.for_plate(PLATE) == []
+    assert data.fuel_assessments.for_plate(PLATE) == []
+    assert data.fuel_reviews.for_plate(PLATE) == []
+    assert len(data.fuel.for_plate("OTHER")) == 1
 
 # A failed request or save is not a reusable report. Even an unusual-drop reply must not create an unsaved alert.
 @pytest.mark.parametrize("failure,status", [
