@@ -280,6 +280,83 @@ def test_corrupt_measurement_file_is_not_overwritten(tmp_path):
         service(tmp_path).add_refuel(PLATE, "01-01-2025", 10000, 20)
     assert path.read_text(encoding="utf-8") == "{broken"
 
+
+# Reject unusable replies, including made-up record IDs, duplicate IDs and invalid confidence values.
+@pytest.mark.parametrize("change", [
+    {"trend": "unknown"},
+    {"confidence": 1},
+    {"pattern": "Unknown"},
+    {"baseline_assessment": "Healthy"},
+    {"summary": "short"},
+    {"possible_factors": [1]},
+    {"suggested_checks": [1]},
+    {"anomaly_status": "Potential abnormal consumption"},
+    {"anomaly_status": "Monitor", "flagged_entry_ids": []},
+    {"flagged_entry_ids": [9]},
+    {"anomaly_status": "Monitor", "flagged_entry_ids": [6]},
+    {"anomaly_status": "Monitor", "flagged_entry_ids": [10]},
+    {"anomaly_status": "Monitor", "flagged_entry_ids": [9, 9]},
+    {"anomaly_status": "Monitor", "flagged_entry_ids": [True]},
+    {"anomaly_status": "Monitor", "flagged_entry_ids": ["9"]},
+    {"suggested_checks": []},
+    {"confidence": "99%"}
+])
+def test_invalid_ai_fields_and_flagged_records_are_rejected(change):
+    dashboard = analyse([15] * 5 + [10] * 3)
+    assert FuelAIAdvisor.validate_response(json.dumps(ai_answer(**change)), dashboard) is None
+
+# If the first provider fails, try the next. Send the measurements and saved maintenance without private details.
+def test_ai_falls_back_and_receives_both_checks_and_saved_maintenance_only():
+    dashboard = analyse([15] * 5 + [12] * 3)
+    dashboard["maintenance_history"] = [{"part_name": "Engine Oil", "service_date": "01-01-2025"}]
+    first = Provider("not JSON", "First")
+    second = Provider(json.dumps(ai_answer()), "Second")
+    result = FuelAIAdvisor([first, second]).analyse(dashboard, CAR_MODEL)
+    assert result["ai_provider"] == "Second" and first.calls == second.calls == 1
+    data = json.loads(second.prompt.splitlines()[-1])
+    assert len(data["measurements"]["recent_individual_checks"]) == 3
+    assert data["measurements"]["recent_average_km_per_l"] == 12
+    assert data["maintenance_history"][0]["part_name"] == "Engine Oil"
+    assert "Not collected" in data["driving_context"] and PLATE not in second.prompt
+    assert all("status" not in item for item in data["measurements"]["recent_individual_checks"])
+    assert "guidance, not automatic cut-offs" in second.prompt
+    assert "confidence describes support for the FUEL PATTERN" in second.prompt
+
+# An empty or unfinished dashboard must return straight away instead of contacting a provider.
+@pytest.mark.parametrize("count", [None, 0, 1, 7])
+def test_ai_provider_is_skipped_when_the_dashboard_is_not_ready(count):
+    dashboard = {} if count is None else analyse([15] * count)
+    provider = Provider(json.dumps(ai_answer()))
+    result = FuelAIAdvisor([provider]).analyse(dashboard, CAR_MODEL)
+    assert result["ai_status"] == "insufficient_history" and provider.calls == 0
+
+# A timeout followed by broken JSON should produce a clear unavailable result instead of crashing.
+def test_network_failure_and_failed_json_return_an_unavailable_report():
+    result = FuelAIAdvisor([Provider(TimeoutError("test timeout")), Provider("bad JSON")]).analyse(
+        analyse([15] * 8))
+    assert result["ai_status"] == "unavailable"
+
+# The same fuel evidence can lead to different advice when AI confidence or comparison suitability changes.
+# High confidence supports the fuel pattern; it does not prove that a particular part has failed.
+def test_ai_fields_meaningfully_change_follow_up():
+    dashboard = analyse([15] * 5 + [12] * 3)
+    logic = FuelLogicManager()
+    reply = ai_answer(anomaly_status="Unusual drop", trend="Worsening", confidence="High",
+                      pattern="Repeated", flagged_entry_ids=[7, 8, 9])
+    strong = logic.evaluate_fuel(dashboard, reply)
+    uncertain = logic.evaluate_fuel(dashboard, {**reply, "confidence": "Low"})
+    unsuitable = logic.evaluate_fuel(dashboard, {**reply, "baseline_assessment": "Uncertain"})
+    assert strong["fuel_outcome"].startswith("INSPECTION ADVISED")
+    assert uncertain["fuel_outcome"].startswith("VERIFY")
+    assert unsuitable["fuel_outcome"].startswith("VERIFY")
+    assert "numeric_status" not in strong
+
+# One poor tank deserves verification; it is not enough evidence for repeated deterioration.
+def test_a_single_outlier_is_not_routed_as_persistent_deterioration():
+    reply = ai_answer(anomaly_status="Unusual drop", trend="Worsening", confidence="High",
+                      pattern="Isolated", flagged_entry_ids=[9])
+    result = FuelLogicManager().evaluate_fuel(analyse([15] * 7 + [10]), reply)
+    assert result["fuel_outcome"].startswith("VERIFY")
 # Hold the measurements constant and change the AI reply. The anomaly category must follow the AI decision.
 @pytest.mark.parametrize("status", ["Normal", "Monitor", "Unusual drop", "Unclear"])
 def test_ai_owns_the_anomaly_category_for_the_same_evidence(tmp_path, status):
