@@ -539,6 +539,30 @@ def test_a_single_outlier_is_not_routed_as_persistent_deterioration():
     assert result["fuel_outcome"].startswith("VERIFY")
 
 
+# A failed request or save is not a reusable report. Even an unusual-drop reply must not create an unsaved alert.
+@pytest.mark.parametrize("failure,status", [
+    ("provider", "Normal"), ("storage", "Normal"), ("storage", "Unusual drop"),
+])
+def test_failed_requests_and_failed_saves_do_not_become_cached_reports(tmp_path, failure, status):
+    fuel = service(tmp_path, [15] * 5 + [10] * 3)
+    path = tmp_path / "fuel_assessments.json"
+    if failure == "storage":
+        path.write_text("{broken", encoding="utf-8")
+    ai = UnavailableAI() if failure == "provider" else RecordingAI(
+        anomaly_status=status, pattern="Isolated" if status == "Unusual drop" else "No clear drop")
+    for _ in range(2):
+        result = request_report(fuel, ai)
+        assert not result["saved"] and not result["reused"] and not result["alert_active"]
+        if failure == "provider":
+            assert result["ai_status"] == "unavailable" and result["ai_anomaly_status"] is None
+        else:
+            assert result["ai_status"] == "ok" and "could not be saved" in result["message"]
+    assert ai.calls == 2 and not service(tmp_path).get_dashboard(PLATE)["alert_active"]
+    if failure == "storage":
+        assert path.read_text(encoding="utf-8") == "{broken"
+    else:
+        assert not path.exists()
+
 # A matching saved report cannot bypass the minimum-history check.
 def test_validation_also_blocks_an_old_learning_period_report(tmp_path):
     data = FuelDataManager(data_dir=str(tmp_path))
@@ -633,6 +657,12 @@ def test_changing_the_car_model_invalidates_the_saved_report(tmp_path):
     assert fuel.get_dashboard(PLATE, "Mazda 3 Hatchback 2020")["assessment_pending"]
     result = request_report(fuel, ai, model='Mazda 3 Hatchback 2020')
     assert ai.calls == 2 and not result["reused"]
+
+# Reject damaged comparison values instead of trusting a saved alert with the wrong records or numbers.
+@pytest.mark.parametrize("damage", [
+    {"entry_ids": [{}, 3, 4, 5, 6]}, {"entry_ids": [2, 3, 4, 5, 99]},
+    {"range": ["bad", 15]}, {"km_per_l": 1234}, {"litres": False},
+])
 def test_damaged_saved_comparison_is_not_used_or_reused(tmp_path, damage):
     fuel = service(tmp_path, [15] * 5 + [10] * 3)
     open_alert(fuel)
