@@ -20,3 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t car-maintenance-tracker .   # the build runs the tests too
+
+  mongodb:
+    # Runs the repository tests against a real MongoDB server, started for this job only.
+    runs-on: ubuntu-latest
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -v tests/test_mongo_integration.py
+        env:
+          MONGODB_TEST_URI: mongodb://localhost:27017   # a throwaway server, no password

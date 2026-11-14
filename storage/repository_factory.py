@@ -62,3 +62,5 @@ class RepositoryFactory:
         connection = MongoConnection.connect(uri, database)
         if connection is None:
             logger.warning("MongoDB is unavailable -- using the JSON files instead.")
+            return cls()
+        return cls(connection)
