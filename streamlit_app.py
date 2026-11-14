@@ -9,6 +9,7 @@ import logging
 from gui.account_page import AccountPage
 from gui.gui_page import GuiPage
 from gui.gui_services import GuiServices
+from gui.history_page import HistoryPage
 from gui.profile_page import ProfilePage
 
 
@@ -25,7 +26,7 @@ class StreamlitGui:
         self.__account = AccountPage(ui, services)
         # A new page is one more object in this list; run() doesn't change (OCP).
         self.__pages: list[GuiPage] = [
-            ProfilePage(ui, services)]
+            HistoryPage(ui, services), ProfilePage(ui, services)]
 
     @classmethod
     def create(cls, ui=None) -> StreamlitGui:
