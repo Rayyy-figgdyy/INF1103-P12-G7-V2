@@ -16,3 +16,6 @@ python-dotenv>=1.0.0
 
 # Run automated tests to check that project functions work correctly.
 pytest>=7.0
+
+# The web GUI (run with: streamlit run streamlit_app.py).
+streamlit>=1.37
