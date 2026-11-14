@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import datetime
 
+from controllers.check_record_builder import CheckRecordBuilder
 from controllers.history_controller import HistoryController
 from controllers.maintenance_pipeline import MaintenancePipeline
 from data_manager import DataManager
@@ -27,9 +28,10 @@ class CheckController:
         self.__data = data
         self.__logic = logic
         self.__rules = rules
-        self.__brake_analyser = brake_analyser
         self.__pipeline = pipeline
         self.__history = history         # used when a part has no history yet
+        # COMPOSITION: the record builder is created here and owned by this controller.
+        self.__record_builder = CheckRecordBuilder(data, brake_analyser)        # used when a part has no history yet
 
     def __check_setup(self, user: UserProfile) -> tuple | None:
         """Ask which part to check. Returns (manual path, part, stored rule) or None."""
@@ -156,36 +158,9 @@ class CheckController:
     def build_check_record(self, user: UserProfile, part_name: str, last_service: dict,
                            current_odometer: int, chosen_interval: dict,
                            model_year: int | None) -> dict:
-        """The record sent to the AI; brake pads also carry their validated history."""
-        today = datetime.date.today()
-        raw_record = {
-            "license_plate": user.license_plate,
-            "car_model": user.car_model,
-            "car_condition": user.car_condition,
-            "coe_expiry_date": user.coe_expiry_date,
-            "part_name": part_name,
-            "check_date": today.strftime("%d-%m-%Y"),
-            "service_id": last_service.get("service_id"),   # None for a "from new" check
-            "last_service_date": last_service["service_date"],
-            "last_service_mileage": last_service["service_odometer"],
-            "last_service_action": last_service.get("service_action") or "unknown",
-            "current_odometer": current_odometer,
-        }
-        raw_record.update(chosen_interval)
-
-        if part_name == "Brake Pads":
-            brake_history = self.__data.history.for_part(user.license_plate, part_name)
-            context = self.__brake_analyser.context(brake_history, model_year, today,
-                                                   current_odometer)
-            raw_record["history_context"] = {
-                "eligible": context["eligible"],
-                "replacement_count": context["replacement_count"],
-                "reason": context["reason"],
-            }
-            # The history is only sent once it has passed validation.
-            if context["eligible"]:
-                raw_record["brake_pad_history"] = brake_history
-        return raw_record
+        """The record sent to the AI (built by CheckRecordBuilder, shared with the GUI)."""
+        return self.__record_builder.build(user, part_name, last_service, current_odometer,
+                                           chosen_interval, model_year)
 
     def check_part(self, user: UserProfile) -> UserProfile:
         """Menu option 5: assess one part using the manual, history and current mileage."""
