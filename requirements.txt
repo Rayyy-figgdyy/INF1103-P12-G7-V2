@@ -19,3 +19,7 @@ pytest>=7.0
 
 # The web GUI (run with: streamlit run streamlit_app.py).
 streamlit>=1.37
+
+# Optional MongoDB storage (STORAGE=mongo in .env). certifi gives Atlas's TLS certificates.
+pymongo>=4.6
+certifi
