@@ -14,9 +14,7 @@ class FuelAssessmentRepository:
 
     # Find reports saved for one vehicle.
     def for_plate(self, license_plate: str) -> list[dict]:
-        plate = license_plate.strip().upper()
-        return [entry for entry in self.__repository.load_all()
-                if isinstance(entry, dict) and entry.get("license_plate") == plate]
+        return self.__repository.find({"license_plate": license_plate.strip().upper()})
 
     # Do not call AI again when the same report has already been saved.
     def find_repeat(self, license_plate: str, data_key: str) -> dict | None:
@@ -31,22 +29,13 @@ class FuelAssessmentRepository:
     def save(self, license_plate: str, data_key: str, result: dict) -> bool:
         if result.get("ai_status") != "ok":
             return False
-        records = self.__repository.load_all()
-        records.append({
+        return self.__repository.insert({
             "license_plate": license_plate.strip().upper(),
             "data_key": data_key,
             "saved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "result": dict(result),
         })
-        return self.__repository.save_all(records)
 
     # Remove reports when the matching profile is deleted.
     def delete_for_plate(self, license_plate: str) -> int:
-        records = self.__repository.load_all()
-        plate = license_plate.strip().upper()
-        keep = [item for item in records if not (
-            isinstance(item, dict) and item.get("license_plate") == plate)]
-        removed = len(records) - len(keep)
-        if removed and not self.__repository.save_all(keep):
-            return 0
-        return removed
+        return self.__repository.delete({"license_plate": license_plate.strip().upper()})

@@ -38,14 +38,11 @@ class CheckRepository:
 
     def load(self) -> list[dict]:
         """Return every saved AI check, oldest first ([] if none yet)."""
-        return self.__repository.load_all()
+        return self.__repository.find({})
 
     def save(self, record: dict) -> bool:
-        """Append one finished check (reads all, adds one, rewrites all).
-        Returns True if it was saved."""
-        records = self.load()
-        records.append(record)
-        return self.__repository.save_all(records)
+        """CREATE: add one finished check. Returns True if it was saved."""
+        return self.__repository.insert(record)
 
     def query(self, filter_fn) -> list[dict]:
         """Return the saved checks for which filter_fn(check) is True, in saved order.
@@ -58,8 +55,7 @@ class CheckRepository:
 
     def for_plate(self, license_plate: str) -> list[dict]:
         """Return the saved checks for one car, in saved order."""
-        return self.query(lambda record: isinstance(record, dict)
-                          and record.get("license_plate") == license_plate)
+        return self.__repository.find({"license_plate": license_plate})
 
     @classmethod
     def same_inputs(cls, record_a: dict, record_b: dict) -> bool:
@@ -70,8 +66,11 @@ class CheckRepository:
         return True
 
     def find_repeat(self, record: dict) -> dict | None:
-        """Return the most recent saved check with the same inputs as record, or None."""
-        matches = self.query(lambda saved: self.same_inputs(saved, record))
+        """Return the most recent saved check with the same inputs as record, or None.
+        Only that car's checks for that part are read from storage."""
+        candidates = self.__repository.find({"license_plate": record.get("license_plate"),
+                                             "part_name": record.get("part_name")})
+        matches = [saved for saved in candidates if self.same_inputs(saved, record)]
         if matches:
             return matches[-1]              # checks are appended, so the last match is newest
         return None
@@ -80,15 +79,7 @@ class CheckRepository:
         """Delete every saved AI check for one car. Returns how many were deleted.
         AccountController calls this right after deleting the user, so a deleted
         profile leaves no checks."""
-        records = self.load()
-        remaining = []
-        for record in records:
-            if not isinstance(record, dict) or record.get("license_plate") != license_plate:
-                remaining.append(record)
-        removed_count = len(records) - len(remaining)
-        if removed_count > 0 and not self.__repository.save_all(remaining):
-            return 0                        # the write failed, so nothing was really deleted
-        return removed_count
+        return self.__repository.delete({"license_plate": license_plate})
 
     @staticmethod
     def last_odometer(records: list[dict], license_plate: str) -> int | None:

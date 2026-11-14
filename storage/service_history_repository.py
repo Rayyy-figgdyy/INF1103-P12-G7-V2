@@ -18,23 +18,15 @@ class ServiceHistoryRepository:
 
     def load_all(self) -> list[dict]:
         """Return every service entry for every car, in saved order ([] if none yet)."""
-        return self.__repository.load_all()
+        return self.__repository.find({})
 
     def for_plate(self, license_plate: str) -> list[dict]:
         """Return the service entries for one car, in saved order."""
-        entries = []
-        for entry in self.load_all():
-            if isinstance(entry, dict) and entry.get("license_plate") == license_plate:
-                entries.append(entry)
-        return entries
+        return self.__repository.find({"license_plate": license_plate})
 
     def for_part(self, license_plate: str, part_name: str) -> list[dict]:
         """Return all matching history entries in saved order, keeping their raw fields."""
-        entries = []
-        for entry in self.for_plate(license_plate):
-            if entry.get("part_name") == part_name:
-                entries.append(entry)
-        return entries
+        return self.__repository.find({"license_plate": license_plate, "part_name": part_name})
 
     @staticmethod
     def next_service_id(entries: list[dict]) -> int:
@@ -49,45 +41,23 @@ class ServiceHistoryRepository:
     def add(self, entry: dict) -> dict | None:
         """CREATE: give the entry a new service_id and save it.
         Returns the saved entry (with its id), or None if saving failed."""
-        entries = self.load_all()
         new_entry = dict(entry)
-        new_entry["service_id"] = self.next_service_id(entries)
-        entries.append(new_entry)
-        if not self.__repository.save_all(entries):
+        new_entry["service_id"] = self.next_service_id(self.load_all())
+        if not self.__repository.insert(new_entry):
             return None
         return new_entry
 
     def update(self, updated: dict) -> bool:
         """UPDATE: replace the saved entry that has the same service_id.
         Returns False if no entry has that id or saving failed."""
-        entries = self.load_all()
-        for position in range(len(entries)):
-            if entries[position].get("service_id") == updated.get("service_id"):
-                entries[position] = updated
-                return self.__repository.save_all(entries)
-        return False
+        return self.__repository.replace({"service_id": updated.get("service_id")}, updated)
 
     def delete(self, service_id: int) -> bool:
         """DELETE: remove the entry with this service_id.
         Returns False if no entry has that id or saving failed."""
-        entries = self.load_all()
-        remaining = []
-        for entry in entries:
-            if entry.get("service_id") != service_id:
-                remaining.append(entry)
-        if len(remaining) == len(entries):
-            return False                    # id not found
-        return self.__repository.save_all(remaining)
+        return self.__repository.delete({"service_id": service_id}) > 0
 
     def delete_for_plate(self, license_plate: str) -> int:
         """Delete every service entry for one car. Returns how many were deleted.
         AccountController calls this when a profile is deleted."""
-        entries = self.load_all()
-        remaining = []
-        for entry in entries:
-            if entry.get("license_plate") != license_plate:
-                remaining.append(entry)
-        removed_count = len(entries) - len(remaining)
-        if removed_count > 0 and not self.__repository.save_all(remaining):
-            return 0                        # the write failed, so nothing was really deleted
-        return removed_count
+        return self.__repository.delete({"license_plate": license_plate})

@@ -39,27 +39,19 @@ class FuelReviewRepository:
                 if item["license_plate"] == plate:
                     matching.append(dict(item))
             else:
-                logger.warning("Ignoring a damaged fuel review row; its measurements remain unchanged.")
+                logger.warning("Ignoring a damaged fuel review row; "
+                               "its measurements remain unchanged.")
         return matching
 
     # The JSON store refuses to overwrite an unreadable existing file.
     def save(self, review: dict) -> bool:
         if not self.__valid(review):
             raise ValueError("The fuel review is incomplete or invalid.")
-        records = self.__repository.load_all()
         item = dict(review)
         item["license_plate"] = item["license_plate"].strip().upper()
         item["reviewed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        records.append(item)
-        return self.__repository.save_all(records)
+        return self.__repository.insert(item)
 
     # Remove only the deleted profile's fuel review history.
     def delete_for_plate(self, license_plate: str) -> int:
-        plate = license_plate.strip().upper()
-        records = self.__repository.load_all()
-        keep = [item for item in records if not (
-            isinstance(item, dict) and item.get("license_plate") == plate)]
-        removed = len(records) - len(keep)
-        if removed and not self.__repository.save_all(keep):
-            return 0
-        return removed
+        return self.__repository.delete({"license_plate": license_plate.strip().upper()})
