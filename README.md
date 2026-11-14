@@ -98,6 +98,26 @@ The four manuals need to be in the `manuals` folder (they already are in the
 repo). If a car's manual is missing, you won't be able to check that car's
 parts.
 
+### Running the web GUI (Streamlit)
+
+```bash
+streamlit run streamlit_app.py
+```
+
+Your browser opens at http://localhost:8501. The GUI has the same features as
+the terminal menus: maintenance history, AI urgency checks, the urgent list,
+fuel records with a km/L chart, the fuel AI analysis and your profile. Both use
+the same files in `data`, so anything saved in one shows up in the other.
+
+To run the GUI in Docker instead, build as below, then:
+
+```bash
+docker run -it --rm --env-file .env -v "$(pwd)/data:/app/data" -p 8501:8501 \
+  car-maintenance-tracker streamlit run streamlit_app.py --server.address=0.0.0.0
+```
+
+and open http://localhost:8501.
+
 ### Running the tests
 
 ```bash

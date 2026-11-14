@@ -13,4 +13,7 @@ COPY . .
 # The image only builds if every test passes (no API key needed)
 RUN python -m pytest -q
 
+# The web GUI listens on this port when started with: streamlit run streamlit_app.py
+EXPOSE 8501
+
 CMD ["python", "main.py"]
