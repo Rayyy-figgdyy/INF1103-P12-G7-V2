@@ -12,7 +12,7 @@ from gui.gui_services import GuiServices
 from gui.history_page import HistoryPage
 from gui.check_page import CheckPage
 from gui.profile_page import ProfilePage
-
+from gui.urgent_page import UrgentPage
 
 class StreamlitGui:
     """Runs the GUI. Streamlit re-runs this whole file after every click, so the
@@ -27,7 +27,7 @@ class StreamlitGui:
         self.__account = AccountPage(ui, services)
         # A new page is one more object in this list; run() doesn't change (OCP).
         self.__pages: list[GuiPage] = [
-            HistoryPage(ui, services), CheckPage(ui, services), ProfilePage(ui, services)]
+            HistoryPage(ui, services), CheckPage(ui, services), UrgentPage(ui, services),ProfilePage(ui, services)]
 
     @classmethod
     def create(cls, ui=None) -> StreamlitGui:
