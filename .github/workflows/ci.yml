@@ -1,0 +1,22 @@
+# Continuous Integration (Week 11): every push and pull request runs the tests.
+# A failed test turns the run red, so a problem is found before it is merged.
+name: Python checks
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"          # the same version as the Dockerfile
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -v          # no API key needed: the tests use fake AI replies
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t car-maintenance-tracker .   # the build runs the tests too
