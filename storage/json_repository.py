@@ -1,14 +1,14 @@
 """
-A Repository kept in one JSON file. Implements the Repository interface and
-COMPOSES (creates and owns) its JsonStore.
+A Repository kept in one JSON file. INHERITANCE: a ListRepository, so it only needs
+load_all and save_all. COMPOSES (creates and owns) its JsonStore.
 """
 from __future__ import annotations
 
 from storage.json_store import JsonStore
-from storage.repository import Repository
+from storage.list_repository import ListRepository
 
 
-class JsonRepository(Repository):
+class JsonRepository(ListRepository):
     """A Repository kept in one JSON file. COMPOSITION: it creates and owns its
     JsonStore, which has no life outside this repository."""
 

@@ -18,6 +18,7 @@ from models.user_profile import UserProfile
 from storage.car_catalogue import CarCatalogue
 from storage.check_repository import CheckRepository
 from storage.json_repository import JsonRepository
+from storage.list_repository import ListRepository
 from storage.json_store import JsonStore
 from storage.repository import Repository
 from storage.service_history_repository import ServiceHistoryRepository
@@ -536,7 +537,7 @@ def test_brake_history_change_prevents_repeat_reuse():
 # --- Object-oriented design --------------------------------------------------
 
 
-class InMemoryRepository(Repository):
+class InMemoryRepository(ListRepository):
     """A Repository that keeps records in a Python list instead of a file."""
 
     def __init__(self):
