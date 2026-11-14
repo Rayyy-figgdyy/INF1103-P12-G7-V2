@@ -26,6 +26,7 @@ class StreamlitGui:
 
     def __init__(self, ui, services: GuiServices):
         self.__ui = ui
+        self.__services = services
         self.__account = AccountPage(ui, services)
         # A new page is one more object in this list; run() doesn't change (OCP).
         self.__pages: list[GuiPage] = [
@@ -62,6 +63,7 @@ class StreamlitGui:
         if ui.sidebar.button("Log out", key="logout"):
             ui.session_state.pop(GuiPage.USER_KEY, None)
             ui.rerun()
+        ui.sidebar.caption(f"Records kept in: {self.__services.data.storage_name}")
         self.__pages[titles.index(chosen)].render(user)
 
 

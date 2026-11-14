@@ -24,6 +24,7 @@ from logic.history_rules import HistoryRules
 from logic_manager import LogicManager
 from ai.fuel_ai_manager import FuelAIManager
 from storage.fuel_data_manager import FuelDataManager
+from storage.repository_factory import RepositoryFactory
 
 
 class App:
@@ -74,9 +75,11 @@ class App:
 
     @classmethod
     def create(cls) -> App:
-        """Create one CLI app using the existing four-manager architecture."""
+        """Create one CLI app using the existing four-manager architecture.
+        .env decides whether the records are kept in JSON files or MongoDB."""
         cls.__configure_logging()
-        return cls(FuelIOManager(), FuelDataManager(),
+        data = FuelDataManager(repositories=RepositoryFactory.from_env())
+        return cls(FuelIOManager(), data,
                    FuelAIManager.from_env(), FuelLogicManager())
 
     @staticmethod

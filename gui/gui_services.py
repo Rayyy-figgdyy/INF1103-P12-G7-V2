@@ -12,6 +12,7 @@ from logic.fuel_logic_manager import FuelLogicManager
 from logic.history_rules import HistoryRules
 from services.fuel_service import FuelService
 from storage.fuel_data_manager import FuelDataManager
+from storage.repository_factory import RepositoryFactory
 
 
 class GuiServices:
@@ -21,7 +22,7 @@ class GuiServices:
 
     def __init__(self, data: FuelDataManager | None = None, ai: FuelAIManager | None = None,
                  logic: FuelLogicManager | None = None):
-        self.__data = data or FuelDataManager()
+        self.__data = data or FuelDataManager(repositories=RepositoryFactory.from_env())
         self.__ai = ai or FuelAIManager.from_env()
         self.__logic = logic or FuelLogicManager()
         self.__rules = HistoryRules()
