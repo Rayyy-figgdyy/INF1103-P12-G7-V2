@@ -1,0 +1,207 @@
+[
+  {
+    "license_plate": "SMZ2020K",
+    "data_key": "d381a6f0f3d1e158308c84fc9fe09a0a884c9c2ad16179ffd4410ca01b1efbf9",
+    "saved_at": "2026-11-12T18:37:38.879216+00:00",
+    "result": {
+      "trend": "Unclear",
+      "confidence": "Low",
+      "baseline_assessment": "Suitable",
+      "pattern": "Unclear",
+      "summary": "The recorded baseline (14.12\u202fkm/L) and recent three\u2011interval average (14.01\u202fkm/L) are very close, with individual recent values ranging from 13.64 to 14.30\u202fkm/L. The variation is within normal fluctuation and does not clearly indicate an improving or worsening pattern. Because driving conditions and diagnostic codes are missing, confidence in the assessment is low.",
+      "possible_factors": [
+        "Normal variation in fuel consumption due to unknown driving conditions",
+        "Minor changes in vehicle load, temperature, or fuel quality",
+        "Sensor or measurement noise"
+      ],
+      "suggested_checks": [
+        "Continue monitoring fuel economy over the next several fill\u2011ups",
+        "Record basic context (e.g., typical route, traffic, load) for future intervals",
+        "Verify fuel fill\u2011up measurements for consistency"
+      ],
+      "ai_status": "ok",
+      "ai_provider": "Groq (backup)",
+      "numeric_status": "Normal",
+      "fuel_outcome": "NO NEW UNUSUAL DROP - Continue recording full-tank refuels",
+      "ai_trend": "Unclear",
+      "ai_confidence": "Low",
+      "baseline_frozen": false,
+      "persistent_drop": false,
+      "reused": false,
+      "saved": true
+    }
+  },
+  {
+    "license_plate": "SON369C",
+    "data_key": "31f881ac403d5a8f9efaff62d0f1eb8c6e6b164d6551854fe0ee03c4df2cc693",
+    "saved_at": "2026-11-12T18:49:36.152162+00:00",
+    "result": {
+      "trend": "Unclear",
+      "confidence": "Low",
+      "baseline_assessment": "Suitable",
+      "pattern": "Isolated",
+      "summary": "The historical baseline (~15\u202fkm/L) is consistent across 16 prior intervals, but the latest three checks include one sharp drop to 10\u202fkm/L while the other two remain near baseline. With only a single outlier and no context on driving conditions, the pattern cannot be confirmed as persistent.",
+      "possible_factors": [
+        "Fuel leak or inaccurate fuel fill measurement",
+        "Faulty fuel level sensor or fuel gauge reading",
+        "Unusual short\u2011trip driving or heavy load on the last interval",
+        "Engine performance issue (e.g., injector problem) that may be intermittent"
+      ],
+      "suggested_checks": [
+        "Verify fuel fill volume with a calibrated container",
+        "Check for any visible fuel leaks and inspect the fuel cap seal",
+        "Run a diagnostic scan for fuel system codes",
+        "Monitor fuel consumption over the next several fill\u2011ups to see if the low value repeats"
+      ],
+      "ai_status": "ok",
+      "ai_provider": "Groq (backup)",
+      "numeric_status": "Potential abnormal consumption",
+      "fuel_outcome": "VERIFY AND REVIEW ALERT - Check the measurements and baseline suitability",
+      "ai_trend": "Unclear",
+      "ai_confidence": "Low",
+      "baseline_frozen": true,
+      "persistent_drop": false,
+      "reused": false,
+      "saved": true
+    }
+  },
+  {
+    "license_plate": "SMZ2020K",
+    "data_key": "c82c2752b899131e4c65e67306a3bed86b11a43367afe870f6434c8ae9220132",
+    "saved_at": "2026-11-13T10:22:19.561131+00:00",
+    "result": {
+      "anomaly_status": "Normal",
+      "trend": "Stable",
+      "confidence": "High",
+      "baseline_assessment": "Suitable",
+      "pattern": "No clear drop",
+      "summary": "Fuel economy over the last three intervals remains stable and consistent with the comparison average. The most recent interval shows no significant change, with minor variations remaining well within expected baseline limits.",
+      "flagged_entry_ids": [],
+      "possible_factors": [],
+      "suggested_checks": [
+        "Continue routine fuel monitoring during regular refuels"
+      ],
+      "ai_status": "ok",
+      "ai_provider": "Gemini",
+      "analysis_version": "fuel-ai-anomaly-assessment-v3",
+      "car_model": "Mazda 3 Hatchback 2020",
+      "assessment_history_key": "4cc75becdc942a0fea130a517ee6ece421310a148d13703c6a955a34cfd88f55",
+      "assessment_context_key": "bb4809b1124a6f1a643ea49468729618e5661c041088bdf6c16df17f1b249d9f",
+      "assessed_through_entry_id": 20,
+      "assessed_date": "11-11-2026",
+      "comparison_reference": {
+        "km_per_l": 14.118997912317328,
+        "distance_km": 6763,
+        "litres": 479.0,
+        "count": 16,
+        "entry_ids": [
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17
+        ],
+        "range": [
+          13.80327868852459,
+          14.6
+        ]
+      },
+      "reused": false,
+      "saved": true,
+      "fuel_outcome": "NO NEW UNUSUAL DROP - Continue recording full-tank refuels",
+      "ai_anomaly_status": "Normal",
+      "ai_confidence": "High",
+      "ai_pattern": "No clear drop",
+      "baseline_frozen": false,
+      "alert_active": false,
+      "alert": null
+    }
+  },
+  {
+    "license_plate": "SON369C",
+    "data_key": "c9e017c0aeb9f67a5a1ea60d3974a0552edb04d56c0d414fe02b88a7ede1e392",
+    "saved_at": "2026-11-13T10:25:52.280995+00:00",
+    "result": {
+      "anomaly_status": "Unusual drop",
+      "trend": "Worsening",
+      "confidence": "Medium",
+      "baseline_assessment": "Suitable",
+      "pattern": "Isolated",
+      "summary": "The comparison average is highly consistent. The fuel economy drop is isolated to the most recent interval, which fell 33.4% below the comparison average, while the previous two intervals were normal. Driving context is unknown.",
+      "flagged_entry_ids": [
+        40
+      ],
+      "possible_factors": [
+        "Low tyre pressure",
+        "Increased short trips or heavy idling"
+      ],
+      "suggested_checks": [
+        "Check tyre pressures",
+        "Inspect for fuel leaks or brake drag"
+      ],
+      "ai_status": "ok",
+      "ai_provider": "Gemini",
+      "analysis_version": "fuel-ai-anomaly-assessment-v3",
+      "car_model": "Honda Civic 2025",
+      "assessment_history_key": "ec43e7b3c49af47fa049b5a96cf2bd44edb8c7903fb5927ee3054ace16999ba9",
+      "assessment_context_key": "585ea3cb1913a892400851911dd4929193a85e4caba231843df8c1e8100d0c41",
+      "assessed_through_entry_id": 40,
+      "assessed_date": "11-11-2026",
+      "comparison_reference": {
+        "km_per_l": 15.01875,
+        "distance_km": 7209,
+        "litres": 480.0,
+        "count": 16,
+        "entry_ids": [
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37
+        ],
+        "range": [
+          14.721311475409836,
+          15.4
+        ]
+      },
+      "reused": false,
+      "saved": true,
+      "fuel_outcome": "MONITOR AND REVIEW - Review the open AI alert and check the next interval",
+      "ai_anomaly_status": "Unusual drop",
+      "ai_confidence": "Medium",
+      "ai_pattern": "Isolated",
+      "baseline_frozen": true,
+      "alert_active": true,
+      "alert": {
+        "first_entry_id": 40,
+        "first_date": "11-11-2026",
+        "detected_entry_id": 40,
+        "peak_status": "Unusual drop",
+        "through_entry_id": 40,
+        "last_date": "11-11-2026"
+      }
+    }
+  }
+]
